@@ -145,7 +145,7 @@ class GlobalHyperNodeTransformer(nn.Module):
         
         self.dropout = nn.Dropout(dropout_rate)
 
-        # Shared Transformer
+   
         self.shared_transformer = BasicTransformer(
             hidden_channels=hidden_channels,
             n_layers=n_layers,
@@ -246,46 +246,28 @@ class GlobalHyperNodeTransformer(nn.Module):
 
             
             ones = torch.ones_like(E, dtype=torch.float32)
-
-            # Edge degree: How many nodes are in each hyperedge? Shape: [E_num]
             edge_degree = torch_scatter.scatter(ones, E, dim=-1, reduce="add")
-
-            # Node degree: How many hyperedges is each node part of? Shape: [N]
             node_degree = torch_scatter.scatter(ones, V, dim=-1, reduce="add", dim_size=N)
-
-            # Reshape degrees for broadcasting against feature tensors [..., C]
-            # clamp(min=1) is crucial to prevent division by zero for isolated nodes/edges
             edge_degree = edge_degree.unsqueeze(-1).clamp(min=1) 
             node_degree = node_degree.unsqueeze(-1).clamp(min=1)
 
-            # --- MESSAGE PASSING LOOP ---
             for _ in range(self.k - 1):
                 
-                # 1. Gather node features
+
                 Xve = self.W1(x)[..., V, :] # [nnz, C]
-                
-                # 2. SCATTER TO EDGES (Use SUM/ADD instead of mean)
                 Xe_sum = torch_scatter.scatter(Xve, E, dim=-2, reduce="add") # [E, C]
-                
-                # 3. APPLY MLP (Network learns from the raw count/magnitude here)
+              
                 Xe_mlp = self.W_tr1(Xe_sum)
-                
-                # 4. NORMALIZE (Divide by edge degree)
+             
                 Xe = Xe_mlp / edge_degree
 
                 Xe = self.W2(Xe)
-                
-                # 5. Gather edge features
+               
                 Xev = Xe[..., E, :] # [nnz, C]
-                
-                # 6. SCATTER TO NODES (Use SUM/ADD instead of mean)
+               
                 Xv_sum = torch_scatter.scatter(Xev, V, dim=-2, reduce="add", dim_size=N) # [N, C]
                 
-                # 7. APPLY MLP (You will need a new linear layer/MLP here, e.g., self.W3)
-                # If you didn't have one previously, you should initialize self.W3 in __init__
                 Xv_mlp = self.W_tr2(Xv_sum) 
-                         
-                # 8. NORMALIZE (Divide by node degree)
                 Xv = Xv_mlp / node_degree
                 
                 Xv_.append(Xv)
@@ -303,10 +285,7 @@ class GlobalHyperNodeTransformer(nn.Module):
             x=g_proc*x_
         else:
             x = g_proc*x_ + g_se*Xv
-            #print mean of gates
-            
-            # print("Gate Proc Mean:", g_proc.mean().item())
-            # print("Gate SE Mean:", g_se.mean().item())
+        
 
         if not self.subhg and self.k > 1:
             self.saved_node_degree = node_degree.squeeze(-1).detach().cpu().numpy()
