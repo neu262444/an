@@ -43,7 +43,7 @@ Required libraries:
 
 ### Data Preparation
 
-Download our preprocessed dataset from [google drive](https://drive.google.com/drive/folders/1vv-KmOUNuGqotZLtvEaX_Mck1xb--sqE?usp=drive_link)
+Download our preprocessed dataset from [google drive](https://drive.google.com/drive/folders/1vv-KmOUNuGqotZLtvEaX_Mck1xb--sqE?usp=drive_link).
 Then put the downloaded directory under the root folder of this repository. The directory structure should look like:
 ```
 HSGF-T/
