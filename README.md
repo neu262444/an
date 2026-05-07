@@ -296,14 +296,7 @@ For each hyperedge $e$ with $|e| \geq 2$ nodes, all pairwise node connections ar
 
 If you use this work in your research, please cite:
 
-```
-@misc{hypergraph_nn_2024,
-  title={Hypergraph Neural Networks with Spectral Methods},
-  author={Your Name},
-  year={2024},
-  url={https://github.com/neu262444/an}
-}
-```
+
 
 ## License
 
