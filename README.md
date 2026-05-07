@@ -40,19 +40,8 @@ configargparse
 
 Download our preprocessed datasets. We provide multiple download options:
 
-**Option 1: Using gdown (Recommended)**
-```bash
-pip install gdown
-python scripts/download_datasets.py
-```
 
-**Option 2: Automatic Script**
-```bash
-bash scripts/download_datasets.sh
-```
-
-**Option 3: Manual Download**
-- Download from [Google Drive Folder](https://drive.google.com/drive/folders/YOUR_FOLDER_ID)
+- Download from [Google Drive Folder]([https://drive.google.com/drive/folders/YOUR_FOLDER_ID](https://drive.google.com/drive/folders/1vv-KmOUNuGqotZLtvEaX_Mck1xb--sqE?usp=sharing))
 - Extract the datasets to the `raw_data/` directory
 
 The directory structure should look like:
