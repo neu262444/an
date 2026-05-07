@@ -125,7 +125,14 @@ python train.py \
   --dropout 0.7 \
   --lr 0.0008 \
   --wd 0 \
-  --method HSAT
+  --method HSAT \
+  --mp_steps 2 \
+  --w1 0 \
+  --w2 0 \
+  --w3 0 \
+  --w4 0 \
+  --w5 0 \
+  --clf_layer 1
 ```
 
 </details>
@@ -143,7 +150,189 @@ python train.py \
   --dropout 0.7 \
   --lr 0.0008 \
   --wd 0 \
-  --method HSAT
+  --method HSAT \
+  --mp_steps 2 \
+  --w1 0 \
+  --w2 0 \
+  --w3 0 \
+  --w4 0 \
+  --w5 0 \
+  --clf_layer 1
+```
+
+</details>
+
+<details>
+<summary><strong>NTU2012</strong></summary>
+
+```bash
+python train.py \
+  --dname NTU2012 \
+  --data_dir ./data/NTU2012/ \
+  --runs 10 \
+  --n_layers 1 \
+  --hidden_dim 128 \
+  --dropout 0.2 \
+  --lr 0.0008 \
+  --wd 0 \
+  --method HSAT \
+  --mp_steps 2 \
+  --w1 1 \
+  --w2 0 \
+  --w3 1 \
+  --w4 0 \
+  --w5 1 \
+  --clf_layer 2
+```
+
+</details>
+
+<details>
+<summary><strong>Cora-CA</strong></summary>
+
+```bash
+python train.py \
+  --dname coauthor_cora \
+  --data_dir ./data/coauthor_cora/ \
+  --runs 10 \
+  --n_layers 1 \
+  --hidden_dim 256 \
+  --dropout 0.7 \
+  --lr 0.0008 \
+  --wd 0 \
+  --method HSAT \
+  --mp_steps 2 \
+  --w1 0 \
+  --w2 0 \
+  --w3 0 \
+  --w4 0 \
+  --w5 0 \
+  --clf_layer 2
+```
+
+</details>
+
+<details>
+<summary><strong>DBLP-CA</strong></summary>
+
+```bash
+python train.py \
+  --dname coauthor_dblp \
+  --data_dir ./data/coauthor_dblp/ \
+  --runs 10 \
+  --n_layers 1 \
+  --hidden_dim 128 \
+  --dropout 0.5 \
+  --lr 0.0008 \
+  --wd 0 \
+  --method HSAT \
+  --mp_steps 2 \
+  --w1 1 \
+  --w2 0 \
+  --w3 1 \
+  --w4 0 \
+  --w5 1 \
+  --clf_layer 2
+```
+
+</details>
+
+<details>
+<summary><strong>Congress</strong></summary>
+
+```bash
+python train.py \
+  --dname congress-bills \
+  --data_dir ./data/congress-bills/ \
+  --runs 10 \
+  --n_layers 1 \
+  --hidden_dim 128 \
+  --dropout 0.3 \
+  --lr 0.0008 \
+  --wd 0 \
+  --method HSAT \
+  --mp_steps 2 \
+  --w1 1 \
+  --w2 0 \
+  --w3 1 \
+  --w4 0 \
+  --w5 1 \
+  --clf_layer 2
+```
+
+</details>
+
+<details>
+<summary><strong>Mushroom</strong></summary>
+
+```bash
+python train.py \
+  --dname Mushroom \
+  --data_dir ./data/Mushroom/ \
+  --runs 10 \
+  --n_layers 1 \
+  --hidden_dim 128 \
+  --dropout 0.1 \
+  --lr 0.0008 \
+  --wd 0 \
+  --method HSAT \
+  --mp_steps 2 \
+  --w1 0 \
+  --w2 0 \
+  --w3 0 \
+  --w4 0 \
+  --w5 0 \
+  --clf_layer 1
+```
+
+</details>
+
+<details>
+<summary><strong>Walmart</strong></summary>
+
+```bash
+python train.py \
+  --dname walmart-trips \
+  --data_dir ./data/walmart-trips/ \
+  --runs 10 \
+  --n_layers 1 \
+  --hidden_dim 128 \
+  --dropout 0.2 \
+  --lr 0.0008 \
+  --wd 0 \
+  --method HSAT \
+  --mp_steps 7 \
+  --w1 2 \
+  --w2 0 \
+  --w3 0 \
+  --w4 0 \
+  --w5 2 \
+  --clf_layer 2
+```
+
+</details>
+
+<details>
+<summary><strong>ModelNet40</strong></summary>
+
+```bash
+python train.py \
+  --dname ModelNet40 \
+  --data_dir ./data/ModelNet40/ \
+  --runs 10 \
+  --n_layers 1 \
+  --hidden_dim 256 \
+  --dropout 0.1 \
+  --lr 0.0008 \
+  --wd 0 \
+  --method HSAT \
+  --mp_steps 2 \
+  --w1 0 \
+  --w2 0 \
+  --w3 0 \
+  --w4 0 \
+  --w5 0 \
+  --clf_layer 1
 ```
 
 </details>

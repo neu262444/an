@@ -237,7 +237,7 @@ def main(args):
     print(f"Standard deviation of runtime across all runs and epochs: {np.std(runtime_list):.4f} seconds")
     
     logger.print_statistics()
-    if args.extract_subgraph == False and k> 1:
+    if args.extract_subgraph == False and args.mp_steps > 1:
         print("Generating gate visualization...")
        
         print(f"Average g_proc across nodes: {np.mean(run_g_proc):.4f}")
