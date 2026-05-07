@@ -6,7 +6,7 @@ Official implementation of hypergraph neural network models with advanced spectr
 
 ## Introduction
 
-This repository provides a comprehensive implementation of modern hypergraph neural network architectures designed to capture complex higher-order relationships in data. Our framework combines several state-of-the-art methods including:
+This repository provides a comprehensive implementation of modern hypergraph neural network architectures designed to capture complex higher-order relationships in data. Our framework combines several advanced techniques:
 
 - **Spectral Methods**: Normalized Laplacian positional encodings, clique expansion techniques
 - **Diffusion Processes**: Hypergraph random walk probability matrices and multi-step diffusion
@@ -14,8 +14,6 @@ This repository provides a comprehensive implementation of modern hypergraph neu
 - **Transformer Architectures**: Attention-based mechanisms for hypergraph processing
 
 The codebase supports multiple model variants and datasets, enabling researchers to benchmark and develop new hypergraph learning methods.
-
-![Hypergraph Visualization](img.png)
 
 ## Getting Started
 
@@ -40,29 +38,47 @@ configargparse
 
 ### Data Preparation
 
-Prepare your datasets in the following structure:
+Download our preprocessed datasets. We provide multiple download options:
 
+**Option 1: Using gdown (Recommended)**
+```bash
+pip install gdown
+python scripts/download_datasets.py
+```
+
+**Option 2: Automatic Script**
+```bash
+bash scripts/download_datasets.sh
+```
+
+**Option 3: Manual Download**
+- Download from [Google Drive Folder](https://drive.google.com/drive/folders/YOUR_FOLDER_ID)
+- Extract the datasets to the `raw_data/` directory
+
+The directory structure should look like:
 ```
 an/
   <source code files>
   ...
-  data/
-    dataset_name/
-      raw/
-        ...
+  raw_data/
+    cocitation/
+      cora/
+      citeseer/
+      pubmed/
+    coauthorship/
+      coauthor_cora/
+      coauthor_dblp/
+    senate-committees-100/
+    house-committees-100/
+    ...
 ```
 
-Supported datasets include:
-- Cora
-- Citeseer
-- Pubmed
-- Coauthor-Cora
-- Coauthor-DBLP
-- Senate Committees
-- House Committees
-- Congress Bills
-- ModelNet40
-- NTU 2012
+**Supported Datasets:**
+- Cora, Citeseer, Pubmed (Cocitation networks)
+- Coauthor-Cora, Coauthor-DBLP (Coauthorship networks)
+- Senate Committees, House Committees (Congressional networks)
+- Congress Bills (Legislative data)
+- ModelNet40, NTU 2012 (3D/Action data)
 
 ## Training
 
@@ -74,7 +90,7 @@ python train.py --method <model_name> --dname <dataset_name> --All_num_layers <n
   --Classifier_num_layers <classifier_depth> --Classifier_hidden <classifier_hidden> \
   --lr <learning_rate> --wd <weight_decay> \
   --epochs <num_epochs> --cuda <cuda_id> \
-  --data_dir <data_path>
+  --data_dir <data_path> --raw_data_dir <raw_data_path>
 ```
 
 ### Hyperparameter Configuration
@@ -105,7 +121,7 @@ python train.py --method EDGNN --dname cora --All_num_layers 1 --MLP_num_layers 
   --MLP2_num_layers 0 --MLP3_num_layers 1 --Classifier_num_layers 1 \
   --MLP_hidden 256 --Classifier_hidden 256 --aggregate mean \
   --restart_alpha 0.0 --lr 0.001 --wd 0 --epochs 500 --runs 10 \
-  --cuda 0 --data_dir ./data/cora
+  --cuda 0 --data_dir ./data/cora --raw_data_dir ./raw_data/cocitation/cora
 ```
 
 </details>
@@ -118,7 +134,7 @@ python train.py --method EDGNN --dname cora --All_num_layers 1 --MLP_num_layers 
 python train.py --method AllSetTransformer --dname cora --All_num_layers 2 \
   --MLP_num_layers 1 --MLP_hidden 128 --Classifier_num_layers 1 \
   --Classifier_hidden 128 --lr 0.001 --wd 0 --epochs 500 --runs 10 \
-  --cuda 0 --data_dir ./data/cora
+  --cuda 0 --data_dir ./data/cora --raw_data_dir ./raw_data/cocitation/cora
 ```
 
 </details>
@@ -131,7 +147,7 @@ python train.py --method AllSetTransformer --dname cora --All_num_layers 2 \
 python train.py --method HSAT --dname cora --All_num_layers 1 \
   --n_layers 1 --hops 3 --heads 8 --hidden_dim 256 --Classifier_hidden 256 \
   --lr 0.0005 --wd 0.00001 --epochs 600 --runs 15 \
-  --cuda 0 --data_dir ./data/cora
+  --cuda 0 --data_dir ./data/cora --raw_data_dir ./raw_data/cocitation/cora
 ```
 
 </details>
@@ -144,7 +160,7 @@ python train.py --method HSAT --dname cora --All_num_layers 1 \
 python train.py --method HNHN --dname cora --All_num_layers 2 \
   --MLP_num_layers 1 --MLP_hidden 128 --Classifier_num_layers 1 \
   --HNHN_alpha -1.5 --HNHN_beta -0.5 --lr 0.001 --wd 0 --epochs 500 \
-  --cuda 0 --data_dir ./data/cora
+  --cuda 0 --data_dir ./data/cora --raw_data_dir ./raw_data/cocitation/cora
 ```
 
 </details>
@@ -157,7 +173,7 @@ python train.py --method HNHN --dname cora --All_num_layers 2 \
 python train.py --method HyperGCN --dname cora --All_num_layers 2 \
   --MLP_num_layers 1 --MLP_hidden 128 --Classifier_num_layers 1 \
   --HyperGCN_mediators --HyperGCN_fast --lr 0.001 --wd 0 --epochs 500 \
-  --cuda 0 --data_dir ./data/cora
+  --cuda 0 --data_dir ./data/cora --raw_data_dir ./raw_data/cocitation/cora
 ```
 
 </details>
@@ -170,7 +186,7 @@ python train.py --method HyperGCN --dname cora --All_num_layers 2 \
 python train.py --method HyperSAGE --dname cora --All_num_layers 2 \
   --MLP_num_layers 1 --MLP_hidden 128 --HyperSAGE_power 1.0 \
   --HyperSAGE_num_sample 100 --lr 0.001 --wd 0 --epochs 500 \
-  --cuda 0 --data_dir ./data/cora
+  --cuda 0 --data_dir ./data/cora --raw_data_dir ./raw_data/cocitation/cora
 ```
 
 </details>
@@ -226,19 +242,6 @@ Implements state-of-the-art architectures:
 - HyperND, EquivSetGNN
 - GlobalHyperNodeTransformer (HSAT)
 
-## Output and Visualization
-
-The training process generates:
-
-1. **Performance Metrics**: Train/validation/test accuracy and loss
-2. **Gate Analysis**: Scatter plots of feature gates vs node degree
-3. **PDF Reports**: Publication-quality visualizations with NeurIPS formatting
-4. **Runtime Statistics**: Training time and memory profiling
-
-Example output filenames:
-- `img_cora.pdf` - Gate visualization for Cora dataset
-- `img_ModelNet40.pdf` - 3D point cloud analysis
-
 ## Configuration Files
 
 Create YAML configs for reproducible experiments:
@@ -259,6 +262,7 @@ epochs: 600
 runs: 15
 cuda: 0
 data_dir: ./data/cora
+raw_data_dir: ./raw_data/cocitation/cora
 ```
 
 Then run:
@@ -266,37 +270,18 @@ Then run:
 python train.py --config config.yaml
 ```
 
-## Spectral and Diffusion Theory
-
-### Normalized Laplacian PE
-
-The symmetric normalized hypergraph Laplacian is defined as:
-
-$$L = I - D_v^{-1/2} H D_e^{-1} H^T D_v^{-1/2}$$
-
-Where:
-- $D_v$ = node degree matrix
-- $D_e$ = hyperedge size matrix
-- $H$ = incidence matrix
-
-Positional encodings are extracted from the first $k$ eigenvectors (excluding the constant mode).
-
-### Random Walk PE
-
-Three variants of random walk encodings:
-- **EN**: Equal neighbor probability
-- **EE**: Hyperedge-normalized (weight = $1/(|e|-1)$)
-- **WE**: Weighted by incident hyperedge strengths
-
-### Clique Expansion
-
-For each hyperedge $e$ with $|e| \geq 2$ nodes, all pairwise node connections are created, forming a clique. Zhou-style weighting applies $1/(|e|-1)$ normalization per hyperedge.
-
 ## Citation
 
 If you use this work in your research, please cite:
 
-
+```
+@inproceedings{wang2022equivariant,
+  title={Equivariant Hypergraph Diffusion Neural Operators},
+  author={Wang, Peihao and Yang, Shenghao and Liu, Yunyu and Wang, Zhangyang and Li, Pan},
+  booktitle={International Conference on Learning Representations (ICLR)},
+  year={2023}
+}
+```
 
 ## License
 
