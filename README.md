@@ -6,7 +6,7 @@ Official implementation of hypergraph neural network models with advanced spectr
 
 ## Introduction
 
-This repository provides a comprehensive implementation of modern hypergraph neural network architectures designed to capture complex higher-order relationships in data. Our framework combines several advanced techniques:
+This repository provides a comprehensive implementation of modern hypergraph neural network architectures designed to capture complex higher-order relationships in data. Our framework combines several[...]
 
 - **Spectral Methods**: Normalized Laplacian positional encodings, clique expansion techniques
 - **Diffusion Processes**: Hypergraph random walk probability matrices and multi-step diffusion
@@ -41,7 +41,7 @@ configargparse
 Download our preprocessed datasets. We provide multiple download options:
 
 
-- Download from [Google Drive Folder]([https://drive.google.com/drive/folders/YOUR_FOLDER_ID](https://drive.google.com/drive/folders/1vv-KmOUNuGqotZLtvEaX_Mck1xb--sqE?usp=sharing))
+- Download from [Google Drive Folder](https://drive.google.com/drive/folders/1vv-KmOUNuGqotZLtvEaX_Mck1xb--sqE?usp=sharing)
 - Extract the datasets to the `raw_data/` directory
 
 The directory structure should look like:
@@ -266,7 +266,7 @@ If you use this work in your research, please cite:
 ```
 @inproceedings{wang2022equivariant,
   title={Equivariant Hypergraph Diffusion Neural Operators},
-  author={Wang, Peihao and Yang, Shenghao and Liu, Yunyu and Wang, Zhangyang and Li, Pan},
+  author={Wang, Peihao and Yang, Shenghao and Liu, Yunyu, Wang, Zhangyang and Li, Pan},
   booktitle={International Conference on Learning Representations (ICLR)},
   year={2023}
 }
