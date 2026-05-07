@@ -212,8 +212,7 @@ def main(args):
 
         model.eval()
         
-        k = args.hops
-        if args.extract_subgraph == False and k > 1:
+        if args.extract_subgraph == False and args.mp_steps > 1:
 
             
             with torch.no_grad():
@@ -469,17 +468,33 @@ if __name__ == '__main__':
     parser.add_argument('--Classifier_hidden', default=256,type=int)
      # Model common hyperparameters
     parser.add_argument('--method', default='HSAT', help='model type')
-    parser.add_argument('--All_num_layers', default=2, type=int, help='number of basic blocks')
-    parser.add_argument('--MLP_num_layers', default=2, type=int, help='layer number of mlps')
-    parser.add_argument('--MLP_hidden', default=64, type=int, help='hidden dimension of mlps')
-    parser.add_argument('--Classifier_num_layers', default=2,
-                        type=int)  # How many layers of decoder
+    
     
     parser.add_argument('--aggregate', default='mean', choices=['sum', 'mean'])
     parser.add_argument('--normalization', default='ln', choices=['bn','ln','None'])
     parser.add_argument('--activation', default='relu', choices=['Id','relu', 'prelu'])
-    
+
+    # Args for HSAT
+    parser.add_argument('--mp_steps', default=2, type=int, help='number of message passing steps')
+    parser.add_argument('--w1', default=0, type=int, help='layer number of mlps')
+    parser.add_argument('--w2', default=0, type=int, help='layer number of mlps')
+    parser.add_argument('--w3', default=0, type=int, help='layer number of mlps')
+    parser.add_argument('--w4', default=0, type=int, help='layer number of mlps')
+    parser.add_argument('--w5', default=0, type=int, help='layer number of mlps')
+    parser.add_argument('--clf_layer', default=1, type=int, help='layer number of classifier mlps')
+    parser.add_argument('--use_avg_gate', action='store_true')
+    parser.add_argument('--pre_transform', action='store_true')
+    parser.add_argument('--use_rwpe', action='store_true')
+    parser.add_argument('--use_lappe', action='store_true')
+    parser.add_argument('--mp_steps_subhg', default=3, type=int, help='number of message passing steps in the sub-hypergraph extractor')
+    parser.add_argument('--subhg_hop', default=4, type=int, help='number of hops for sub-hypergraph extraction')
+   
     # Args for EDGNN
+    parser.add_argument('--All_num_layers', default=2, type=int, help='number of basic blocks')
+    parser.add_argument('--MLP_num_layers', default=2, type=int, help='layer number of mlps')
+    parser.add_argument('--MLP_hidden', default=64, type=int, help='hidden dimension of mlps')
+    parser.add_argument('--Classifier_num_layers', default=2,
+                        type=int)
     parser.add_argument('--MLP2_num_layers', default=-1, type=int, help='layer number of mlp2')
     parser.add_argument('--MLP3_num_layers', default=-1, type=int, help='layer number of mlp3')
     parser.add_argument('--edconv_type', default='EquivSet', type=str, choices=['EquivSet', 'JumpLink', 'MeanDeg', 'Attn', 'TwoSets'])
@@ -518,6 +533,10 @@ if __name__ == '__main__':
     parser.set_defaults(exclude_self=False)
     parser.set_defaults(struct_data=False)
     parser.set_defaults(extract_subgraph=False)
+    parser.set_defaults(use_avg_gate=False)
+    parser.set_defaults(pre_transform=True)
+    parser.set_defaults(use_rwpe=False)
+    parser.set_defaults(use_lappe=False)
     parser.set_defaults(AllSet_GPR=False)
     parser.set_defaults(AllSet_LearnMask=False)
     parser.set_defaults(AllSet_PMA=True)  # True: Use PMA. False: Use Deepsets.

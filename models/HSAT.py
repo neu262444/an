@@ -74,22 +74,22 @@ class GlobalHyperNodeTransformer(nn.Module):
         self.args = args
         self.node_input_proj = nn.Linear( in_channels , hidden_channels)
 
-        mlp1_layers = 0
-        mlp2_layers = 0
-        mlp3_layers = 0
-        tr1_layers = 0
-        tr2_layers = 0
+        mlp1_layers = args.w1
+        mlp2_layers = args.w3
+        mlp3_layers = args.w5
+        tr1_layers = args.w2
+        tr2_layers = args.w4
         
-        self.k = 2# for k -1  hop neighbours
+        self.k = args.mp_steps# for k -1  hop neighbours
 
-        classifier_layers = 1
+        classifier_layers = args.clf_layer
 
-        self.rwpe = False
-        self.lappe = False
+        self.rwpe = args.use_rwpe
+        self.lappe = args.use_lappe
         
-        self.pre_transform = True
+        self.pre_transform = args.pre_transform
 
-        self.gate_exp = False
+        self.gate_exp = args.use_avg_gate
 
         self.subhg = args.extract_subgraph
         if mlp1_layers > 0:
