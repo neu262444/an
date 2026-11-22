@@ -1,6 +1,5 @@
 import math
 
-from sympy import python
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -21,7 +20,7 @@ def init_params(module, n_layers):
         module.weight.data.normal_(mean=0.0, std=0.02)
 
 class BasicTransformer(nn.Module):
-    def __init__(self, hidden_channels, n_layers=1, heads=8, dropout_rate=0.1):
+    def __init__(self, hidden_channels, n_layers=1, heads=8, dropout_rate=0.1, mixer="attn"):
         super().__init__()
        
         self.layers = nn.ModuleList([
@@ -30,7 +29,8 @@ class BasicTransformer(nn.Module):
                 ffn_size=2 * hidden_channels,
                 dropout_rate=dropout_rate,
                 attention_dropout_rate=dropout_rate,
-                num_heads=heads
+                num_heads=heads,
+                mixer=mixer
             )
             for _ in range(n_layers)
 
@@ -44,9 +44,12 @@ class BasicTransformer(nn.Module):
 
     
 
-    def forward(self, x, attn_bias=None):
-        for layer in self.layers:
-            x = layer(x, attn_bias)
+    def forward(self, x, attn_bias=None, raw=None, v_src="phi", skip_src="phi"):
+        for i, layer in enumerate(self.layers):
+            if i == 0:
+                x = layer(x, attn_bias, raw=raw, v_src=v_src, skip_src=skip_src)
+            else:
+                x = layer(x, attn_bias)
         return self.final_ln(x)
     
 
@@ -92,6 +95,29 @@ class GlobalHyperNodeTransformer(nn.Module):
         self.gate_exp = args.use_avg_gate
 
         self.subhg = args.extract_subgraph
+        self.theory_encoder = getattr(args, "theory_encoder", False)
+        self.feat_mode = getattr(args, "feat_mode", "real")
+        self.const_no_dropout = getattr(args, "const_no_dropout", False)
+        assert self.feat_mode in ("real", "ones")
+        variant = getattr(args, "variant", None)
+        if variant is None:
+            self.v_src = getattr(args, "v_src", "phi")
+            self.skip_src = getattr(args, "skip_src", "phi")
+        else:
+            variants = {
+                "full": ("phi", "phi"),
+                "qk_leak": ("raw", "phi"),
+                "qk_clean": ("raw", "raw"),
+                "qkv_clean": ("phi", "raw"),
+            }
+            assert variant in variants, f"unknown variant: {variant}"
+            self.v_src, self.skip_src = variants[variant]
+        assert self.v_src in ("phi", "raw") and self.skip_src in ("phi", "raw")
+        if (self.v_src, self.skip_src) != ("phi", "phi"):
+            assert n_layers == 1, "non-default structural variants require n_layers == 1"
+            assert self.k > 1, "mp_steps == 1 skips the structure branch; the ablation would be meaningless"
+            assert not (self.rwpe or self.lappe), "turn PEs off for this ablation"
+        assert not (getattr(args, "mixer", "attn") == "mlp" and (self.v_src, self.skip_src) != ("phi", "phi")), "mlp mixer uses the full variant"
         if mlp1_layers > 0:
             self.W1 = MLP(in_channels=hidden_channels, out_channels=hidden_channels, hidden_channels=hidden_channels, num_layers=mlp1_layers,
                 dropout=dropout_rate, Normalization='ln', InputNorm=True)
@@ -150,7 +176,8 @@ class GlobalHyperNodeTransformer(nn.Module):
             hidden_channels=hidden_channels,
             n_layers=n_layers,
             heads=heads,
-            dropout_rate=dropout_rate
+            dropout_rate=dropout_rate,
+            mixer=getattr(args, "mixer", "attn")
         )
         
         if self.subhg:  
@@ -223,12 +250,18 @@ class GlobalHyperNodeTransformer(nn.Module):
 
 
         x = data.x
-        x = self.dropout(x)
+        if self.feat_mode == "ones":
+            x = torch.ones_like(data.x)
+
+        # x = torch.randn_like(x) 
+        if not (self.feat_mode == "ones" and self.const_no_dropout):
+            x = self.dropout(x)
         x = F.relu(self.node_input_proj(x))
         x0 = x
         V, E = data.edge_index[0], data.edge_index[1]
         N = x.shape[-2]
-        x = self.dropout(x)
+        if not (self.feat_mode == "ones" and self.const_no_dropout):
+            x = self.dropout(x)
         x_ = x
         Xv_=[]
        
@@ -256,27 +289,37 @@ class GlobalHyperNodeTransformer(nn.Module):
 
                 Xve = self.W1(x)[..., V, :] # [nnz, C]
                 Xe_sum = torch_scatter.scatter(Xve, E, dim=-2, reduce="add") # [E, C]
-              
-                Xe_mlp = self.W_tr1(Xe_sum)
-             
-                Xe = Xe_mlp / edge_degree
+
+                if self.theory_encoder:
+                    Xe = Xe_sum
+                else:
+                    Xe_mlp = self.W_tr1(Xe_sum)
+                    Xe = Xe_mlp / edge_degree
 
                 Xe = self.W2(Xe)
                
                 Xev = Xe[..., E, :] # [nnz, C]
                
                 Xv_sum = torch_scatter.scatter(Xev, V, dim=-2, reduce="add", dim_size=N) # [N, C]
-                
-                Xv_mlp = self.W_tr2(Xv_sum) 
-                Xv = Xv_mlp / node_degree
+
+                if self.theory_encoder:
+                    Xv = Xv_sum
+                else:
+                    Xv_mlp = self.W_tr2(Xv_sum)
+                    Xv = Xv_mlp / node_degree
                 
                 Xv_.append(Xv)
                 x = Xv
 
             Xv = torch.mean(torch.stack(Xv_, dim=0), dim=0)
 
+        if self.theory_encoder:
+            Xv = torch.log1p(Xv.abs()) * torch.sign(Xv)
+
+        if self.subhg or self.k > 1:
+            self.saved_Xv = Xv.detach()
+
        
-        
        
         g_proc = torch.sigmoid(self.gate_node_emb(x_))
         if self.k > 1:
@@ -303,23 +346,19 @@ class GlobalHyperNodeTransformer(nn.Module):
             x = x + g_lap*lap_pe
 
        
-        if self.pre_transform:             
-            x= self.W3(x)
-            x = F.relu(x)
-            x=self.dropout(x)
-            x = self.shared_transformer(
-            (x).unsqueeze(0),
-            attn_bias=None
-        ).squeeze(0)
-            
+        raw = x_
+        abl = dict(v_src=self.v_src, skip_src=self.skip_src)
+
+        if self.pre_transform:
+            x = self.dropout(F.relu(self.W3(x)))
+            if (self.v_src, self.skip_src) != ("phi", "phi"):
+                raw = self.dropout(F.relu(self.W3(raw)))
+            x = self.shared_transformer(x.unsqueeze(0), attn_bias=None,
+                                        raw=raw.unsqueeze(0), **abl).squeeze(0)
         else:
-            x = self.shared_transformer(
-            (x).unsqueeze(0),
-            attn_bias=None
-        ).squeeze(0)
-            x= self.W3(x)
-            x = F.relu(x)
-            x=self.dropout(x)
+            x = self.shared_transformer(x.unsqueeze(0), attn_bias=None,
+                                        raw=raw.unsqueeze(0), **abl).squeeze(0)
+            x = self.dropout(F.relu(self.W3(x)))
                 
         node_emb = x
         
@@ -331,13 +370,18 @@ class GlobalHyperNodeTransformer(nn.Module):
     
 
 class EncoderLayer(nn.Module):
-    def __init__(self, hidden_size, ffn_size, dropout_rate, attention_dropout_rate, num_heads):
+    def __init__(self, hidden_size, ffn_size, dropout_rate, attention_dropout_rate, num_heads, mixer="attn"):
         super(EncoderLayer, self).__init__()
 
         self.self_attention_norm = nn.LayerNorm(hidden_size)
         # self.self_attention_norm = nn.BatchNorm1d(hidden_size)
-        self.self_attention = MultiHeadAttention(
-            hidden_size, attention_dropout_rate, num_heads)
+        self.mixer = mixer
+        if mixer == "mlp":
+            # node-wise MLP, no cross-node mixing: 4d^2+3d params vs 4d^2+4d for attention
+            self.self_attention = FeedForwardNetwork(hidden_size, 2 * hidden_size, dropout_rate)
+        else:
+            self.self_attention = MultiHeadAttention(
+                hidden_size, attention_dropout_rate, num_heads)
         self.self_attention_dropout = nn.Dropout(dropout_rate)
 
         self.ffn_norm = nn.LayerNorm(hidden_size)
@@ -350,11 +394,12 @@ class EncoderLayer(nn.Module):
             if m is not self and hasattr(m, "reset_parameters"):
                 m.reset_parameters()
 
-    def forward(self, x, attn_bias=None):
+    def forward(self, x, attn_bias=None, raw=None, v_src="phi", skip_src="phi"):
         y = self.self_attention_norm(x)
-        y = self.self_attention(y, y, y, attn_bias)
+        v_in = self.self_attention_norm(raw) if v_src == "raw" else y
+        y = self.self_attention(y) if self.mixer == "mlp" else self.self_attention(y, y, v_in, attn_bias)
         y = self.self_attention_dropout(y)
-        x = x + y
+        x = (raw if skip_src == "raw" else x) + y
         # x=y
         y = self.ffn_norm(x)
         y = self.ffn(y)

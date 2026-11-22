@@ -79,7 +79,6 @@ python train.py \
   --w5 0 \
   --clf_layer 1
 ```
-
 ### Argument Description
 
 - `--mp_steps` specifies the number of message-passing iterations in the main HSAT encoder. Larger values allow information aggregation from farther neighborhoods but may increase computation and oversmoothing.

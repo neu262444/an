@@ -20,6 +20,8 @@ import pandas as pd
 
 from models import SetGNN, HCHA, HNHN, HyperGCN, HyperSAGE, \
     LEGCN, UniGCNII, HyperND, EquivSetGNN, GlobalHyperNodeTransformer
+from models import HGraphormer
+from models import HyperGT
 
 import data_processing, datasets, hypergraph, training
 from utils import OneBatch_
@@ -138,6 +140,12 @@ def main(args):
         hg = hg,
         args = args
     )
+    elif args.method == 'HGraphormer':
+        model = HGraphormer(data.num_features, data.num_classes, args)
+    elif args.method == 'HyperGT':
+        args.hypergt_num_nodes = data.num_nodes
+        hypergt_num_hyperedges = int(data.edge_index[1].max().item()) + 1
+        model = HyperGT(data.num_features, data.num_classes, args, hypergt_num_hyperedges)
     else:
         raise ValueError(f'Undefined model name: {args.method}')
 
@@ -182,7 +190,12 @@ def main(args):
             optimizer.zero_grad()
             out = model(data)
             out = F.log_softmax(out, dim=1)
-            loss = loss_fn(out[train_idx], data.y[train_idx])
+            loss0 = loss_fn(out[train_idx], data.y[train_idx])
+            loss = loss0
+            if args.method == 'HyperGT' and (args.hypergt_edge_loss or args.sloss):
+                edge_losses = getattr(model, 'last_edge_losses', [])
+                if edge_losses:
+                    loss = loss0 - args.hypergt_lamda * sum(edge_losses) / len(edge_losses)
             loss.backward()
             optimizer.step()
             lr_scheduler.step()
@@ -212,7 +225,7 @@ def main(args):
 
         model.eval()
         
-        if args.extract_subgraph == False and args.mp_steps > 1:
+        if args.extract_subgraph == False and args.mp_steps > 1 and hasattr(model, 'saved_node_degree'):
 
             
             with torch.no_grad():
@@ -237,7 +250,13 @@ def main(args):
     print(f"Standard deviation of runtime across all runs and epochs: {np.std(runtime_list):.4f} seconds")
     
     logger.print_statistics()
-    if args.extract_subgraph == False and args.mp_steps > 1:
+    import json
+    os.makedirs("results", exist_ok=True)
+    tag = f"HSAT_{args.mixer}" if args.method == "HSAT" else args.method
+    with open(f"results/{args.dname}_{tag}.json", "w") as f:
+        json.dump({"test": [logger.get_statistics(r)["test"] for r in range(args.runs)],
+                   "splits": [int(s["test"].sum()) for s in split_idx_lst]}, f)
+    if args.extract_subgraph == False and args.mp_steps > 1 and hasattr(model, 'saved_node_degree'):
         print("Generating gate visualization...")
        
         print(f"Average g_proc across nodes: {np.mean(run_g_proc):.4f}")
@@ -468,6 +487,37 @@ if __name__ == '__main__':
     parser.add_argument('--Classifier_hidden', default=256,type=int)
      # Model common hyperparameters
     parser.add_argument('--method', default='HSAT', help='model type')
+    parser.add_argument('--variant', default=None, choices=['full', 'qk_leak', 'qk_clean', 'qkv_clean'])
+    parser.add_argument('--feat_mode', default='real', choices=['real', 'ones'])
+    parser.add_argument('--const_no_dropout', action='store_true')
+    parser.add_argument('--theory_encoder', action='store_true')
+
+    # Args for HyperGT
+    parser.add_argument('--hypergt_root', default='../../HyperGT/HyperGT')
+    parser.add_argument('--hypergt_layers', default=2, type=int)
+    parser.add_argument('--hypergt_hidden_channels', default=32, type=int)
+    parser.add_argument('--hypergt_heads', default=4, type=int)
+    parser.add_argument('--hypergt_random_features', default=30, type=int)
+    parser.add_argument('--hypergt_gumbel_samples', default=10, type=int)
+    parser.add_argument('--hypergt_tau', default=0.25, type=float)
+    parser.add_argument('--hypergt_rb_order', default=0, type=int)
+    parser.add_argument('--hypergt_rb_trans', default='sigmoid', choices=['sigmoid', 'identity'])
+    parser.add_argument('--hypergt_edge_loss', action='store_true', help='include HyperGT edge regularization loss')
+    parser.add_argument('--hypergt_lamda', default=0.1, type=float, help='HyperGT edge-loss weight')
+    parser.add_argument('--hypergt_pe', '--pe', dest='hypergt_pe', default='none',
+                        help='HyperGT positional encodings: HEPE, HtEPE, or HEPEHtEPE')
+    parser.add_argument('--sloss', action='store_true', help='alias for HyperGT edge regularization')
+    parser.add_argument('--hypergt_use_bn', action='store_true')
+    parser.add_argument('--hypergt_use_gumbel', action='store_true')
+    parser.add_argument('--hypergt_use_residual', action='store_true')
+    parser.add_argument('--hypergt_use_act', action='store_true')
+    parser.add_argument('--hypergt_use_jk', action='store_true')
+
+    # Args for HGraphormer
+    parser.add_argument('--hgraphormer_layers', default=2, type=int)
+    parser.add_argument('--hgraphormer_hidden_dim', default=60, type=int)
+    parser.add_argument('--hgraphormer_heads', default=3, type=int)
+    parser.add_argument('--hgraphormer_gamma', default=0.0, type=float)
     
     
     parser.add_argument('--aggregate', default='mean', choices=['sum', 'mean'])
@@ -486,6 +536,9 @@ if __name__ == '__main__':
     parser.add_argument('--pre_transform', action='store_true')
     parser.add_argument('--use_rwpe', action='store_true')
     parser.add_argument('--use_lappe', action='store_true')
+    parser.add_argument('--mixer', default='attn', choices=['attn', 'mlp'], help='attn = HSA-attn; mlp = parameter-matched node-wise MLP')
+    parser.add_argument('--v_src', default='phi', choices=['phi', 'raw'])
+    parser.add_argument('--skip_src', default='phi', choices=['phi', 'raw'])
     parser.add_argument('--mp_steps_subhg', default=3, type=int, help='number of message passing steps in the sub-hypergraph extractor')
     parser.add_argument('--subhg_hop', default=4, type=int, help='number of hops for sub-hypergraph extraction')
    

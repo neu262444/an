@@ -10,4 +10,5 @@ venv/
 raw_data/
 hypergraph.pickle
 feature.pickle
+results/
 *.pickle

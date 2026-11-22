@@ -8,3 +8,5 @@ from models.hypernd import HyperND
 from models.allset import SetGNN
 from models.edgnn import EquivSetGNN
 from models.HSAT import GlobalHyperNodeTransformer
+from models.hgraphormer import HGraphormer
+from models.hypergt import HyperGT
