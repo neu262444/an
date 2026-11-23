@@ -181,13 +181,21 @@ class GlobalHyperNodeTransformer(nn.Module):
         )
         
         if self.subhg:  
-            self.se_extractor = SubHypergraphStructureExtractor(embed_dim=hidden_channels, num_layers=1, dropout=dropout_rate)
+            if getattr(args, "subhg_encoder", "concat_proj") == "v1_sum":
+                # paper numbering W1..W4 = self.W1, self.W_tr1, self.W2, self.W_tr2 (same mapping as the V1 loop)
+                self.se_extractor = SubHypergraphV1Extractor(self.W1, self.W_tr1, self.W2, self.W_tr2,
+                                                             num_layers=args.mp_steps_subhg)
+            else:
+                self.se_extractor = SubHypergraphStructureExtractor(embed_dim=hidden_channels,
+                                                                    num_layers=args.mp_steps_subhg,
+                                                                    dropout=dropout_rate)
 
 
 
 
         self.gate_node_emb = nn.Linear(hidden_channels, hidden_channels)
         self.gate_se   = nn.Linear(hidden_channels, hidden_channels)
+        self.perturb = None   # set only by gate_perturbation.py
        
 
 
@@ -225,7 +233,17 @@ class GlobalHyperNodeTransformer(nn.Module):
         self.gate_se.reset_parameters()
         
         
-       
+    def _apply_perturb(self, x_, Xv):
+        """Gate-perturbation test: give node p['node'] another node's structure and/or features."""
+        p = self.perturb
+        v = p["node"]
+        if p.get("struct_from") is not None:
+            Xv = Xv.clone()
+            Xv[v] = Xv[p["struct_from"]]
+        if p.get("feat_from") is not None:
+            x_ = x_.clone()
+            x_[v] = x_[p["feat_from"]]
+        return x_, Xv
 
     def forward(self, data):
    
@@ -318,12 +336,16 @@ class GlobalHyperNodeTransformer(nn.Module):
 
         if self.subhg or self.k > 1:
             self.saved_Xv = Xv.detach()
-
+            self.saved_h0 = x_.detach()
+            if self.perturb is not None and not self.perturb.get("fixed_gate", False):
+                x_, Xv = self._apply_perturb(x_, Xv)   # gates are recomputed from the swapped inputs
        
        
         g_proc = torch.sigmoid(self.gate_node_emb(x_))
         if self.k > 1:
             g_se   = torch.sigmoid(self.gate_se(Xv))
+        if self.perturb is not None and self.perturb.get("fixed_gate", False) and (self.subhg or self.k > 1):
+            x_, Xv = self._apply_perturb(x_, Xv)       # original gates kept (secondary test)
         if self.k ==1:
             x=g_proc*x_
         else:
@@ -605,7 +627,7 @@ class FeedForwardNetwork(nn.Module):
 #         x_struct = self.out_proj(torch.cat([x, x_sub], dim=-1))  # [N, C]
 #         return x_struct
 
-class SubHypergraphStructureExtractor(nn.Module):
+class SubHypergraphRootExtractor(nn.Module):  # root readout, not used in the paper
     def __init__(self, embed_dim, num_layers=1, dropout=0.0):
         super().__init__()
         self.num_layers = 3
@@ -733,86 +755,120 @@ class SubHypergraphStructureExtractor(nn.Module):
         return x_sub_target
 
 
-# class SubHypergraphStructureExtractor(nn.Module):
-#     def __init__(self, embed_dim, num_layers=1, dropout=0.2):
-#         super().__init__()
-#         self.num_layers = num_layers
-#         self.embed_dim = embed_dim
+class SubHypergraphStructureExtractor(nn.Module):
+    def __init__(self, embed_dim, num_layers=1, dropout=0.2):
+        super().__init__()
+        self.num_layers = num_layers
+        self.embed_dim = embed_dim
 
-#         self.W1_layers = nn.ModuleList([
-#             nn.Linear(embed_dim, embed_dim, bias=False) 
-#             for _ in range(num_layers)
-#         ])
-#         # W2 now takes concat of current node state + hyperedge message
-#         self.W2_layers = nn.ModuleList([
-#             nn.Linear(embed_dim * 2, embed_dim, bias=False) 
-#             for _ in range(num_layers)
-#         ])
+        self.W1_layers = nn.ModuleList([
+            nn.Linear(embed_dim, embed_dim, bias=False) 
+            for _ in range(num_layers)
+        ])
+        # W2 now takes concat of current node state + hyperedge message
+        self.W2_layers = nn.ModuleList([
+            nn.Linear(embed_dim * 2, embed_dim, bias=False) 
+            for _ in range(num_layers)
+        ])
 
-#         self.relu = nn.ReLU()
-#         self.dropout = nn.Dropout(dropout)
-#         self.out_proj = nn.Linear(embed_dim * 2, embed_dim)
+        self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(dropout)
+        self.out_proj = nn.Linear(embed_dim * 2, embed_dim)
 
-#     def reset_parameters(self):
-#         for m in self.modules():
-#             if m is not self and hasattr(m, "reset_parameters"):
-#                 m.reset_parameters()
+    def reset_parameters(self):
+        for m in self.modules():
+            if m is not self and hasattr(m, "reset_parameters"):
+                m.reset_parameters()
 
-#     def forward(self, x, sub_E, sub_root, sub_node_index):
-#         N = x.shape[0]
+    def forward(self, x, sub_E, sub_root, sub_node_index):
+        N = x.shape[0]
 
-#         # --- Precompute all indices once ---
-#         max_local_E = sub_E.max().item() + 1
-#         global_E = sub_root * max_local_E + sub_E          # [nnz]
-#         global_V = sub_root * N + sub_node_index           # [nnz]
+        # --- Precompute all indices once ---
+        max_local_E = sub_E.max().item() + 1
+        global_E = sub_root * max_local_E + sub_E          # [nnz]
+        global_V = sub_root * N + sub_node_index           # [nnz]
 
-#         # Unique (root, node) pairs — computed once, reused every layer
-#         unique_global_V, inverse_indices = torch.unique(
-#             global_V, return_inverse=True
-#         )                                                  # [M], [nnz]
-#         unique_roots = unique_global_V // N                # [M]
+        # Unique (root, node) pairs — computed once, reused every layer
+        unique_global_V, inverse_indices = torch.unique(
+            global_V, return_inverse=True
+        )                                                  # [M], [nnz]
+        unique_roots = unique_global_V // N                # [M]
 
-#         # --- Initial node features ---
-#         h = x[sub_node_index]                              # [nnz, C]
+        # --- Initial node features ---
+        h = x[sub_node_index]                              # [nnz, C]
 
-#         for layer_idx in range(self.num_layers):
-#             W1 = self.W1_layers[layer_idx]
-#             W2 = self.W2_layers[layer_idx]
+        for layer_idx in range(self.num_layers):
+            W1 = self.W1_layers[layer_idx]
+            W2 = self.W2_layers[layer_idx]
 
-#             # --- Node -> Hyperedge ---
-#             Xve = W1(h)                                    # [nnz, C]
-#             Xe = torch_scatter.scatter(
-#                 Xve, global_E, dim=0, reduce="mean"
-#             )                                              # [num_global_E, C]
+            # --- Node -> Hyperedge ---
+            Xve = W1(h)                                    # [nnz, C]
+            Xe = torch_scatter.scatter(
+                Xve, global_E, dim=0, reduce="mean"
+            )                                              # [num_global_E, C]
 
-#             # --- Hyperedge -> Node ---
-#             # Concat current node state with incoming hyperedge message
-#             # so each node update is informed by both its current state
-#             # and the aggregated context of the hyperedge it belongs to
-#             Xev = W2(torch.cat([h, Xe[global_E]], dim=-1)) # [nnz, C]
-#             Xev = self.relu(Xev)
-#             Xev = self.dropout(Xev)
+            # --- Hyperedge -> Node ---
+            # Concat current node state with incoming hyperedge message
+            # so each node update is informed by both its current state
+            # and the aggregated context of the hyperedge it belongs to
+            Xev = W2(torch.cat([h, Xe[global_E]], dim=-1)) # [nnz, C]
+            Xev = self.relu(Xev)
+            Xev = self.dropout(Xev)
 
-#             # --- Aggregate to unique (root, node) pairs ---
-#             # This is the standard HGNN hyperedge->node aggregation step:
-#             # h_v = mean over all hyperedges e containing v of W2([h_v, h_e])
-#             # inverse_indices maps each incidence pair to its unique (root,node) slot
-#             h_unique = torch_scatter.scatter(
-#                 Xev, inverse_indices,
-#                 dim=0, reduce="mean",
-#                 dim_size=unique_global_V.shape[0]
-#             )                                              # [M, C]
+            # --- Aggregate to unique (root, node) pairs ---
+            # This is the standard HGNN hyperedge->node aggregation step:
+            # h_v = mean over all hyperedges e containing v of W2([h_v, h_e])
+            # inverse_indices maps each incidence pair to its unique (root,node) slot
+            h_unique = torch_scatter.scatter(
+                Xev, inverse_indices,
+                dim=0, reduce="mean",
+                dim_size=unique_global_V.shape[0]
+            )                                              # [M, C]
 
-#             # Broadcast back to incidence pairs for next layer
-#             h = h_unique[inverse_indices]                  # [nnz, C]
+            # Broadcast back to incidence pairs for next layer
+            h = h_unique[inverse_indices]                  # [nnz, C]
 
-#         # --- Pool unique nodes -> root (sum preserves topological volume) ---
-#         x_sub = torch_scatter.scatter(
-#             h_unique, unique_roots,
-#             dim=0, reduce="add",
-#             dim_size=N
-#         )                                                  # [N, C]
+        # --- Pool unique nodes -> root (sum preserves topological volume) ---
+        x_sub = torch_scatter.scatter(
+            h_unique, unique_roots,
+            dim=0, reduce="add",
+            dim_size=N
+        )                                                  # [N, C]
 
-#         # --- Fuse with original features ---
-#         x_struct = self.out_proj(torch.cat([x, x_sub], dim=-1))  # [N, C]
-#         return x_struct
+        # --- Fuse with original features ---
+        x_struct = self.out_proj(torch.cat([x, x_sub], dim=-1))  # [N, C]
+        return x_struct
+
+
+class SubHypergraphV1Extractor(nn.Module):
+    """V2 as described in Sec. 4.1: L layers of the V1 scatter-gather update (Eqs. 10-11) inside each
+    K-hop sub-hypergraph S_v, then Set-Union Pooling h_v = sum_{u in V_v} hbar_vu (no output projection).
+    W1-W4 (paper numbering) are the same modules the V1 encoder uses; they are owned by the parent model."""
+
+    def __init__(self, W1, W2, W3, W4, num_layers):
+        super().__init__()
+        self.W1, self.W2, self.W3, self.W4 = W1, W2, W3, W4
+        self.num_layers = num_layers
+
+    def reset_parameters(self):
+        pass  # W1-W4 are reset by GlobalHyperNodeTransformer
+
+    def forward(self, x, sub_E, sub_root, sub_node_index):
+        N = x.shape[0]
+        max_local_E = sub_E.max().item() + 1
+        global_E = sub_root * max_local_E + sub_E
+        global_V = sub_root * N + sub_node_index
+        unique_global_V, inverse_indices = torch.unique(global_V, return_inverse=True)
+        unique_roots = unique_global_V // N
+        M = unique_global_V.shape[0]
+        ones = torch.ones_like(global_E, dtype=x.dtype)
+        edge_degree = torch_scatter.scatter(ones, global_E, dim=0, reduce="add").unsqueeze(-1).clamp(min=1)
+        node_degree = torch_scatter.scatter(ones, inverse_indices, dim=0, reduce="add",
+                                            dim_size=M).unsqueeze(-1).clamp(min=1)
+        h = x[unique_global_V % N]                                   # one row per (root, u)
+        for _ in range(self.num_layers):
+            he = torch_scatter.scatter(self.W1(h)[inverse_indices], global_E, dim=0, reduce="add")
+            he = self.W3(self.W2(he) / edge_degree)                  # Eq. (10)
+            hv = torch_scatter.scatter(he[global_E], inverse_indices, dim=0, reduce="add", dim_size=M)
+            h = self.W4(hv) / node_degree                            # Eq. (11)
+        return torch_scatter.scatter(h, unique_roots, dim=0, reduce="add", dim_size=N)   # Set-Union Pooling

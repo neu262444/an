@@ -99,6 +99,14 @@ python train.py \
 
 - `--subhg_hop` defines the hop distance used for constructing local sub-hypergraphs around each node.
 
+- `--subhg_encoder` selects the sub-hypergraph extractor used with `--extract_subgraph`: `concat_proj` (default; the version used for the reported results) or `v1_sum` (Variant-1 layers inside each sub-hypergraph followed by Set-Union Pooling, as in Section 4.1). `--mp_steps_subhg` sets the number of internal layers L and `--subhg_hop` the extraction depth K. Keep `--mp_steps` at 2 or more when using `--extract_subgraph`.
+
+- `--feat_source` replaces the node features after loading: `benchmark` (default, the released features), `structural` (degree statistics plus a spectral embedding of the hypergraph), `random` (fixed Gaussian features) or `label_trick` (fixed Gaussian noise plus, for training nodes only, their one-hot label: each epoch a random `--label_trick_rate` share of training nodes shows its label and the loss uses the rest; at evaluation all training labels are shown, and validation and test labels never are). `structural` and `random` never use labels; they are cached in the dataset's `processed/` folder and shared by all methods.
+
+- `--subhg_max_edges` caps the sub-hypergraph extraction: from each frontier node, at most this many new hyperedges are followed per hop (sampled with `--seed`). The default 0 is the exact extraction used in the paper.
+
+- `--profile_steps N` measures cost instead of training: it times N synchronized training steps and one evaluation pass and reports peak GPU memory. With `--extract_subgraph`, the extraction time and the total sub-hypergraph size are printed while the data loads.
+
 - `--dname` specifies the dataset name.
 
 - `--runs` specifies the number of repeated runs with different random seeds/splits for reporting averaged performance.

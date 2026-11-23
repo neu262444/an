@@ -1,24 +1,38 @@
-# usage: python paired_test.py HSAT_attn HSAT_mlp cora citeseer ...
-#        python paired_test.py HSAT_attn EDGNN    cora citeseer ...
+# usage: python paired_test.py TAG_A TAG_B dataset1 dataset2 ...
+#   tags as written by train.py, e.g. HSAT_attn, EDGNN, HSAT_attn_tr0.1_va0.1
 import json, sys
 import numpy as np
 from scipy import stats
 
-RATIO = 0.25 / 0.5   # n_test / n_train for the 50/25/25 split
 TA, TB = sys.argv[1], sys.argv[2]
-
+rows = []
 for d in sys.argv[3:]:
     A = json.load(open(f"results/{d}_{TA}.json"))
     B = json.load(open(f"results/{d}_{TB}.json"))
     assert A["splits"] == B["splits"], f"{d}: splits differ, comparison is not paired"
-    a, b = np.array(A["test"]), np.array(B["test"])
+    pa = (A.get("train_prop", 0.5), A.get("valid_prop", 0.25))
+    pb = (B.get("train_prop", 0.5), B.get("valid_prop", 0.25))
+    assert pa == pb, f"{d}: different split proportions {pa} vs {pb}"
+    ratio = (1 - pa[0] - pa[1]) / pa[0]            # n_test / n_train
+    a, b = np.array(A["test"], dtype=float), np.array(B["test"], dtype=float)
     diff, k = a - b, len(a)
-    if np.all(diff == 0):
-        print(f"{d:15s} identical on every run"); continue
-    t_p = stats.ttest_rel(a, b).pvalue
-    w_p = stats.wilcoxon(a, b).pvalue
-    t_c = diff.mean() / np.sqrt((1 / k + RATIO) * diff.var(ddof=1))   # Nadeau-Bengio correction
-    c_p = 2 * stats.t.sf(abs(t_c), df=k - 1)
-    print(f"{d:15s} {TA} {a.mean():.2f}±{a.std(ddof=1):.2f} | {TB} {b.mean():.2f}±{b.std(ddof=1):.2f} | "
-          f"diff {diff.mean():+.2f}±{diff.std(ddof=1):.2f} | {TA} wins {np.sum(diff > 0)}/{k} | "
-          f"paired t p={t_p:.3f} | Wilcoxon p={w_p:.3f} | corrected t p={c_p:.3f}")
+    m, sd = diff.mean(), diff.std(ddof=1)
+    tq = stats.t.ppf(0.975, df=k - 1)
+    half = tq * sd / np.sqrt(k)                     # paired 95% t-interval
+    half_c = tq * sd * np.sqrt(1 / k + ratio)       # Nadeau-Bengio corrected (splits overlap)
+    w_p = stats.wilcoxon(a, b).pvalue if np.any(diff != 0) else 1.0
+    rows.append(dict(d=d, a=a, b=b, m=m, ci=(m - half, m + half), cic=(m - half_c, m + half_c),
+                     wins=int(np.sum(diff > 0)), k=k, w_p=w_p))
+
+# Holm correction of the Wilcoxon p-values across the datasets on the command line
+running = 0.0
+for rank, i in enumerate(np.argsort([r["w_p"] for r in rows])):
+    running = max(running, min(1.0, (len(rows) - rank) * rows[i]["w_p"]))
+    rows[i]["w_holm"] = running
+
+print(f"{'dataset':15s} {TA:>14s} {TB:>14s} {'gap':>6s} {'95% CI':>16s} {'corrected 95% CI':>18s} "
+      f"{'wins':>6s} {'Wilcoxon p':>10s} {'Holm p':>7s}")
+for r in rows:
+    print(f"{r['d']:15s} {r['a'].mean():8.2f}±{r['a'].std(ddof=1):5.2f} {r['b'].mean():8.2f}±{r['b'].std(ddof=1):5.2f} "
+          f"{r['m']:+6.2f} [{r['ci'][0]:+6.2f}, {r['ci'][1]:+6.2f}] [{r['cic'][0]:+7.2f}, {r['cic'][1]:+7.2f}] "
+          f"{r['wins']:>3d}/{r['k']:<2d} {r['w_p']:10.4f} {r['w_holm']:7.4f}")
