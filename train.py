@@ -1,11 +1,7 @@
 import gc
 import os
-from multiprocessing import dummy
 import random
 import time
-import warnings
-
-from sympy import deg
 
 import configargparse
 import numpy as np
@@ -14,14 +10,17 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric
 
+import matplotlib as mpl
 import matplotlib.pyplot as plt
-import seaborn as sns
 import pandas as pd
 
 from models import SetGNN, HCHA, HNHN, HyperGCN, HyperSAGE, \
     LEGCN, UniGCNII, HyperND, EquivSetGNN, GlobalHyperNodeTransformer
+from models import HGraphormer
+from models import HyperGT
 
 import data_processing, datasets, hypergraph, training
+import features
 from utils import OneBatch_
 
 
@@ -50,6 +49,62 @@ def evaluate(model, data, split_idx, evaluator, loss_fn, return_out=False):
         ret_list.append(out)
 
     return ret_list
+    
+def profile_cost(model, data, train_idx, args, device):
+    """Synchronized time per training step (forward + backward + optimizer), one eval pass, peak GPU memory."""
+    loss_fn = nn.NLLLoss()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.wd)
+    cuda = device.type == "cuda"
+    what = (f"V2 {args.subhg_encoder} K={args.subhg_hop} L={args.mp_steps_subhg} cap={args.subhg_max_edges}"
+            if args.extract_subgraph else f"V1 mp_steps={args.mp_steps}")
+    model.reset_parameters()
+    model.train()
+    if cuda:
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats(device)
+    times = []
+    try:
+        for step in range(args.profile_steps + 3):          # the first 3 steps are warm-up
+            t0 = time.perf_counter()
+            optimizer.zero_grad()
+            out = F.log_softmax(model(data), dim=1)
+            loss = loss_fn(out[train_idx], data.y[train_idx])
+            loss.backward()
+            optimizer.step()
+            if cuda:
+                torch.cuda.synchronize()
+            if step >= 3:
+                times.append(time.perf_counter() - t0)
+        model.eval()
+        t0 = time.perf_counter()
+        with torch.no_grad():
+            model(data)
+        if cuda:
+            torch.cuda.synchronize()
+        t_eval = time.perf_counter() - t0
+        peak = torch.cuda.max_memory_allocated(device) / 2**30 if cuda else float("nan")
+        print(f"[cost] {args.dname} | {what} | train step {np.mean(times):.4f} ± {np.std(times):.4f} s | "
+              f"eval {t_eval:.4f} s | peak GPU memory {peak:.2f} GB")
+    except torch.cuda.OutOfMemoryError:
+        peak = torch.cuda.max_memory_allocated(device) / 2**30
+        total = torch.cuda.get_device_properties(device).total_memory / 2**30
+        print(f"[cost] {args.dname} | {what} | out of GPU memory (peak before failure {peak:.2f} of {total:.1f} GB)")
+
+
+def run_tag(args):
+    tag = f"HSAT_{args.mixer}" if args.method == "HSAT" else args.method
+    if (args.train_prop, args.valid_prop) != (0.5, 0.25):
+        tag += f"_tr{args.train_prop}_va{args.valid_prop}"
+    if args.feat_source != "benchmark":
+        tag += f"_feat-{args.feat_source}"
+    if args.results_tag:
+        tag += f"_{args.results_tag}"
+    return tag
+
+
+def primitive_args(args):
+    return {k: v for k, v in vars(args).items() if isinstance(v, (int, float, str, bool, type(None)))}
+
 
 def main(args):
     torch.cuda.empty_cache()#release unoccupied memory
@@ -69,6 +124,12 @@ def main(args):
     # transform = torch_geometric.transforms.Compose([datasets.AddHypergraphSelfLoops()])
     data = datasets.HypergraphDataset(root=args.data_dir, name=args.dname,
         feature_noise='1', transform=transform, args=args)._data
+    if args.feat_source == 'label_trick':
+        assert args.method != 'LEGCN', "label_trick needs a model that reads data.x at every forward pass"
+        data.x = torch.from_numpy(features.random_features(int(data.num_nodes), args.feat_dim,
+                                                           args.feat_seed).astype(np.float32))
+    elif args.feat_source != 'benchmark':
+        data.x = torch.from_numpy(features.label_free_features(data, args))
     
     if args.method in ['AllSetTransformer', 'AllDeepSets']:
         data = SetGNN.norm_contruction(data, option=args.normtype)
@@ -79,6 +140,7 @@ def main(args):
     elif args.method == 'LEGCN':
         data = LEGCN.line_expansion(data)
     data = data.to(device)
+    lt_noise = data.x.clone() if args.feat_source == 'label_trick' else None
    
     
     data.H =torch.sparse_coo_tensor(data.edge_index, torch.ones(data.edge_index.size(1), device=device),   size=(data.num_nodes, data.num_hyperedges)
@@ -138,21 +200,24 @@ def main(args):
         hg = hg,
         args = args
     )
+    elif args.method == 'HGraphormer':
+        model = HGraphormer(data.num_features, data.num_classes, args)
+    elif args.method == 'HyperGT':
+        args.hypergt_num_nodes = data.num_nodes
+        hypergt_num_hyperedges = int(data.edge_index[1].max().item()) + 1
+        model = HyperGT(data.num_features, data.num_classes, args, hypergt_num_hyperedges)
     else:
         raise ValueError(f'Undefined model name: {args.method}')
 
 
-    viz_degrees = []
-    viz_g_proc = []
-    viz_g_se = []
-
-   
-   
     model = model.to(device)
     
     # model = torch.compile(model, mode="max-autotune")
     logger = training.Logger(args.runs, args)
     print("# Params:", sum(p.numel() for p in model.parameters() if p.requires_grad))
+    if args.profile_steps > 0:
+        profile_cost(model, data, split_idx_lst[0]['train'].to(device), args, device)
+        return
     
     loss_fn = nn.NLLLoss()
     evaluator = training.NodeClsEvaluator()
@@ -162,6 +227,9 @@ def main(args):
         start_time = time.time()
         split_idx = split_idx_lst[run]
         train_idx = split_idx['train'].to(device)
+        if args.feat_source == 'label_trick':
+            train_onehot = features.train_label_onehot(data.y, train_idx, args.feat_dim)
+            eval_x = features.label_trick_x(lt_noise, train_onehot, train_idx)   # evaluation: all training labels shown
 
         
         torch.cuda.empty_cache()
@@ -176,20 +244,37 @@ def main(args):
         best_val = float('-inf')
         for epoch in range(args.epochs):
             # Training loop
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
             start_epoch = time.time()
            
             model.train()
             optimizer.zero_grad()
+            loss_idx = train_idx
+            if args.feat_source == 'label_trick':
+                perm = train_idx[torch.randperm(train_idx.numel(), device=train_idx.device)]
+                n_in = int(args.label_trick_rate * perm.numel())
+                data.x = features.label_trick_x(lt_noise, train_onehot, perm[:n_in])   # these show their labels
+                loss_idx = perm[n_in:]                                                  # the loss uses the others
             out = model(data)
             out = F.log_softmax(out, dim=1)
-            loss = loss_fn(out[train_idx], data.y[train_idx])
+            loss0 = loss_fn(out[loss_idx], data.y[loss_idx])
+            loss = loss0
+            if args.method == 'HyperGT' and (args.hypergt_edge_loss or args.sloss):
+                edge_losses = getattr(model, 'last_edge_losses', [])
+                if edge_losses:
+                    loss = loss0 - args.hypergt_lamda * sum(edge_losses) / len(edge_losses)
             loss.backward()
             optimizer.step()
             lr_scheduler.step()
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
             end_epoch = time.time()
             total_train.append(end_epoch - start_epoch)
             ev_start = time.time()
             # Evaluation and logging
+            if args.feat_source == 'label_trick':
+                data.x = eval_x
             result = evaluate(model, data, split_idx, evaluator, loss_fn)
             logger.add_result(run, *result[:3])
             ev_end = time.time()
@@ -209,10 +294,16 @@ def main(args):
         
         model.load_state_dict(early_stopping.best_state)
         evaluate(model, data, split_idx, evaluator, loss_fn)
+        if args.save_ckpt:
+            os.makedirs("checkpoints", exist_ok=True)
+            torch.save({"state_dict": early_stopping.best_state,
+                        "split": {k: v.cpu() for k, v in split_idx.items()},
+                        "args": primitive_args(args)},
+                       f"checkpoints/{args.dname}_{run_tag(args)}_run{run}.pt")
 
         model.eval()
         
-        if args.extract_subgraph == False and args.mp_steps > 1:
+        if args.extract_subgraph == False and args.mp_steps > 1 and hasattr(model, 'saved_node_degree'):
 
             
             with torch.no_grad():
@@ -220,7 +311,7 @@ def main(args):
                 _ = model(data) 
                 
                 run_degrees = model.saved_node_degree
-                run_g_proc = model.saved_g_proc
+                run_g_fe = model.saved_g_fe
                 run_g_se = model.saved_g_se
                 
             
@@ -237,68 +328,26 @@ def main(args):
     print(f"Standard deviation of runtime across all runs and epochs: {np.std(runtime_list):.4f} seconds")
     
     logger.print_statistics()
-    if args.extract_subgraph == False and args.mp_steps > 1:
+    import json
+    os.makedirs("results", exist_ok=True)
+    tag = run_tag(args)
+    with open(f"results/{args.dname}_{tag}.json", "w") as f:
+        json.dump({"test": [logger.get_statistics(r)["test"] for r in range(args.runs)],
+                   "splits": [int(s["test"].sum()) for s in split_idx_lst],
+                   "train_prop": args.train_prop, "valid_prop": args.valid_prop,
+                   "args": {k: v for k, v in vars(args).items()
+                            if isinstance(v, (int, float, str, bool, type(None)))}}, f)
+    if args.extract_subgraph == False and args.mp_steps > 1 and hasattr(model, 'saved_node_degree'):
         print("Generating gate visualization...")
        
-        print(f"Average g_proc across nodes: {np.mean(run_g_proc):.4f}")
+        print(f"Average g_fe across nodes: {np.mean(run_g_fe):.4f}")
         print(f"Average g_se across nodes: {np.mean(run_g_se):.4f}")
         
         
-        plot_gates_by_split(run_degrees, run_g_proc, run_g_se, split_idx, data.num_nodes, data=args.dname)
+        plot_gates_by_split(run_degrees, run_g_fe, run_g_se, split_idx, data.num_nodes, data=args.dname)
 
 
 
-
-# def plot_gates_by_split(degrees, g_proc, g_se, split_idx, num_nodes, data= None):
-#     # 1. Create a label array for all nodes
-#     node_splits = np.array(['Unassigned'] * num_nodes, dtype=object)
-    
-#     # Map indices to their respective splits
-#     # Note: Ensure split_idx tensors are moved to CPU for numpy indexing
-#     node_splits[split_idx['train'].cpu().numpy()] = 'Train'
-#     node_splits[split_idx['valid'].cpu().numpy()] = 'Validation'
-#     node_splits[split_idx['test'].cpu().numpy()] = 'Test'
-
-#     # 2. Build a DataFrame
-#     df = pd.DataFrame({
-#         'Node Degree': degrees,
-#         'g_proc': g_proc,
-#         'g_se': g_se,
-#         'Split': node_splits
-#     })
-
-#     # Remove unassigned nodes (if your dataset doesn't use all nodes)
-#     df = df[df['Split'] != 'Unassigned']
-
-#     # 3. Plotting
-#     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-
-#     # Plot g_proc
-#     sns.scatterplot(data=df, x='Node Degree', y='g_proc', hue='Split', 
-#                     alpha=0.6, ax=axes[0], palette='Set1')
-#     axes[0].set_title('g_proc (Process Gate) vs Node Degree')
-#     axes[0].set_xscale('log') # Use log scale if degrees vary wildly
-
-#     # Plot g_se
-#     sns.scatterplot(data=df, x='Node Degree', y='g_se', hue='Split', 
-#                     alpha=0.6, ax=axes[1], palette='Set1')
-#     axes[1].set_title('g_se (Structure Gate) vs Node Degree')
-#     axes[1].set_xscale('log')
-
-#     plt.tight_layout()
-#     if data is None:
-#         filename = "img.png"
-#         plt.savefig(filename, dpi=300, bbox_inches='tight')
-#         print(f"Successfully saved plot to {filename}")
-#     else:
-#         filename = f"img_{data}.png"
-#         plt.savefig(filename, dpi=300, bbox_inches='tight')
-#         print(f"Successfully saved plot to {filename}")    
-
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib as mpl
 
 def plot_gates_by_split(degrees, g_fe, g_se, split_idx, num_nodes, data=None):
     # ── 0. Global style (NeurIPS Caption Matching) ───────────────────────────
@@ -468,6 +517,37 @@ if __name__ == '__main__':
     parser.add_argument('--Classifier_hidden', default=256,type=int)
      # Model common hyperparameters
     parser.add_argument('--method', default='HSAT', help='model type')
+    parser.add_argument('--variant', default=None, choices=['full', 'qk_leak', 'qk_clean', 'qkv_clean'])
+    parser.add_argument('--feat_mode', default='real', choices=['real', 'ones'])
+    parser.add_argument('--const_no_dropout', action='store_true')
+    parser.add_argument('--theory_encoder', action='store_true')
+
+    # Args for HyperGT
+    parser.add_argument('--hypergt_root', default='../../HyperGT/HyperGT')
+    parser.add_argument('--hypergt_layers', default=2, type=int)
+    parser.add_argument('--hypergt_hidden_channels', default=32, type=int)
+    parser.add_argument('--hypergt_heads', default=4, type=int)
+    parser.add_argument('--hypergt_random_features', default=30, type=int)
+    parser.add_argument('--hypergt_gumbel_samples', default=10, type=int)
+    parser.add_argument('--hypergt_tau', default=0.25, type=float)
+    parser.add_argument('--hypergt_rb_order', default=0, type=int)
+    parser.add_argument('--hypergt_rb_trans', default='sigmoid', choices=['sigmoid', 'identity'])
+    parser.add_argument('--hypergt_edge_loss', action='store_true', help='include HyperGT edge regularization loss')
+    parser.add_argument('--hypergt_lamda', default=0.1, type=float, help='HyperGT edge-loss weight')
+    parser.add_argument('--hypergt_pe', '--pe', dest='hypergt_pe', default='none',
+                        help='HyperGT positional encodings: HEPE, HtEPE, or HEPEHtEPE')
+    parser.add_argument('--sloss', action='store_true', help='alias for HyperGT edge regularization')
+    parser.add_argument('--hypergt_use_bn', action='store_true')
+    parser.add_argument('--hypergt_use_gumbel', action='store_true')
+    parser.add_argument('--hypergt_use_residual', action='store_true')
+    parser.add_argument('--hypergt_use_act', action='store_true')
+    parser.add_argument('--hypergt_use_jk', action='store_true')
+
+    # Args for HGraphormer
+    parser.add_argument('--hgraphormer_layers', default=2, type=int)
+    parser.add_argument('--hgraphormer_hidden_dim', default=60, type=int)
+    parser.add_argument('--hgraphormer_heads', default=3, type=int)
+    parser.add_argument('--hgraphormer_gamma', default=0.0, type=float)
     
     
     parser.add_argument('--aggregate', default='mean', choices=['sum', 'mean'])
@@ -486,8 +566,27 @@ if __name__ == '__main__':
     parser.add_argument('--pre_transform', action='store_true')
     parser.add_argument('--use_rwpe', action='store_true')
     parser.add_argument('--use_lappe', action='store_true')
+    parser.add_argument('--mixer', default='attn', choices=['attn', 'mlp'], help='attn = HSA-attn; mlp = parameter-matched node-wise MLP')
+    parser.add_argument('--kernel', default='relu', choices=['relu', 'exp'],
+                        help='attention kernel: relu = linear attention (default); exp = scaled dot-product softmax')
+    parser.add_argument('--results_tag', default='', help='optional suffix for results/<dname>_<tag>.json, e.g. qk_leak or avg_gate')
+    parser.add_argument('--save_ckpt', action='store_true', help="save each run's early-stopping checkpoint and split to checkpoints/")
+    parser.add_argument('--feat_source', default='benchmark', choices=['benchmark', 'structural', 'random', 'label_trick'],
+                        help='node features: benchmark = released features; structural = degree statistics + spectral embedding of the hypergraph; random = fixed N(0,1). structural and random never use labels.')
+    parser.add_argument('--feat_dim', default=100, type=int, help='dimension of structural / random features')
+    parser.add_argument('--feat_seed', default=0, type=int, help='seed for --feat_source random')
+    parser.add_argument('--label_trick_rate', default=0.5, type=float,
+                        help='label_trick: fraction of training nodes whose labels are shown as input each epoch; the loss uses the rest')
+    parser.add_argument('--v_src', default='phi', choices=['phi', 'raw'])
+    parser.add_argument('--skip_src', default='phi', choices=['phi', 'raw'])
     parser.add_argument('--mp_steps_subhg', default=3, type=int, help='number of message passing steps in the sub-hypergraph extractor')
     parser.add_argument('--subhg_hop', default=4, type=int, help='number of hops for sub-hypergraph extraction')
+    parser.add_argument('--subhg_encoder', default='v1_sum', choices=['concat_proj', 'v1_sum'],
+                        help='V2 encoder used with --extract_subgraph: v1_sum (default) = Sec. 4.1 of the paper: L layers of the V1 scatter-gather update (Eqs. 10-11) inside each K-hop sub-hypergraph, degrees counted within the sub-hypergraph, then Set-Union (sum) pooling; concat_proj = the earlier variant used for Table 4 (concatenation updates, sum pooling, output projection with x).')
+    parser.add_argument('--subhg_max_edges', default=0, type=int,
+                        help='V2 only: follow at most this many new hyperedges per frontier node and hop (0 = exact, no cap)')
+    parser.add_argument('--profile_steps', default=0, type=int,
+                        help='if > 0: build the model, time this many synchronized training steps plus one eval pass, print time and peak GPU memory, and exit')
    
     # Args for EDGNN
     parser.add_argument('--All_num_layers', default=2, type=int, help='number of basic blocks')

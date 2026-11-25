@@ -1,5 +1,7 @@
 import os
 import pickle
+import random
+import time
 
 import numpy as np
 import pandas as pd
@@ -141,7 +143,17 @@ class HypergraphDataset(InMemoryDataset):
             self._data = transform(self._data)
 
         if args.extract_subgraph:
-            sub_E, sub_root, sub_node_idx = extract_sub_hypergraphs(self._data.edge_index, self._data.num_nodes, k_hop=4)
+            t0 = time.perf_counter()
+            sub_E, sub_root, sub_node_idx = extract_sub_hypergraphs(
+                self._data.edge_index, self._data.num_nodes, k_hop=args.subhg_hop,
+                max_edges=getattr(args, "subhg_max_edges", 0), seed=getattr(args, "seed", 0))
+            n = self._data.num_nodes
+            nnz = sub_E.numel()
+            per_root = torch.bincount(sub_root, minlength=n)
+            pairs = torch.unique(sub_root * n + sub_node_idx).numel()
+            print(f"[V2 extraction] K={args.subhg_hop}, cap={getattr(args, 'subhg_max_edges', 0)}: "
+                  f"{time.perf_counter() - t0:.1f} s | {nnz:,} incidences in all sub-hypergraphs "
+                  f"(mean {nnz / n:.1f}, max {int(per_root.max())} per node) | {pairs:,} (root, node) pairs")
             self._data.sub_E = sub_E
             self._data.sub_root = sub_root
             self._data.sub_node_index = sub_node_idx
@@ -214,7 +226,7 @@ class HypergraphDataset(InMemoryDataset):
         return '{}(feature_noise={})'.format(self.name, self.feature_noise)
 
     
-def extract_sub_hypergraphs(edge_index, num_nodes, k_hop):
+def extract_sub_hypergraphs(edge_index, num_nodes, k_hop, max_edges=0, seed=0):
     """
     For each root node, extract the k-hop sub-hypergraph.
     
@@ -225,6 +237,10 @@ def extract_sub_hypergraphs(edge_index, num_nodes, k_hop):
     This is the correct semantics for hypergraphs: a hyperedge encodes
     a joint relationship among ALL its members simultaneously. Clipping
     it would destroy this higher-order interaction.
+
+    max_edges > 0 caps, for every frontier node and hop, the number of new
+    hyperedges followed (sampled uniformly with a fixed seed). max_edges = 0
+    (default) is the exact, uncapped extraction.
     """
     V, E = edge_index[0], edge_index[1]
     num_hedges = E.max().item() + 1
@@ -237,6 +253,8 @@ def extract_sub_hypergraphs(edge_index, num_nodes, k_hop):
         edge_to_nodes[e].append(v)
 
    
+    rng = random.Random(seed)
+
     all_sub_E = []
     all_sub_root = []
     all_sub_node_index = []
@@ -257,7 +275,12 @@ def extract_sub_hypergraphs(edge_index, num_nodes, k_hop):
         for _ in range(k_hop):
             new_frontier = set()
             for node in frontier:
-                for e in node_to_edges[node]:
+                edges = node_to_edges[node]
+                if max_edges and len(edges) > max_edges:
+                    edges = [e for e in edges if e not in visited_edges]
+                    if len(edges) > max_edges:
+                        edges = rng.sample(edges, max_edges)
+                for e in edges:
                     if e not in visited_edges:
                         visited_edges.add(e)
                         # Keep hyperedge whole — pull in ALL its members
