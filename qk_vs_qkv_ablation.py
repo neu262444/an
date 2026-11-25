@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Q/K vs Q/K/V ablation on the large synthetic dataset (uniform features, 1-WL-equivalent pairs).
+Q/K vs Q/K/V ablation on the large synthetic dataset (uniform features, 1-GWL-equivalent pairs).
 
 Needs v1_vs_v2_structure_test.py in the same directory (data generator, encoders, references).
 
@@ -25,7 +25,7 @@ Contrasts
     a0 vs c0 : effect of structural V on the bare attention operator
 
 Parts (--parts)
-    dist   UNTRAINED: share of 1-WL-equivalent pairs (with different |V_v|) whose block outputs differ,
+    dist   UNTRAINED: share of 1-GWL-equivalent pairs (with different |V_v|) whose block outputs differ,
            and the median normalised distance, over random initialisations.
     train  end-to-end training, test accuracy over seeds (mean +- std, min-max).
 """

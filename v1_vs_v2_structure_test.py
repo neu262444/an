@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-V1 (efficient) vs V2 (expressive) on 1-WL-indistinguishable hypergraphs with UNIFORM features.
+V1 (efficient) vs V2 (expressive) on 1-GWL-indistinguishable hypergraphs with UNIFORM features.
 
 Parts (choose with --parts, default: sep probe)
-  sep    UNTRAINED. Share of node pairs whose encoder embeddings differ. Pairs are 1-WL-equivalent
+  sep    UNTRAINED. Share of node pairs whose encoder embeddings differ. Pairs are 1-GWL-equivalent
          by construction (base hypergraph vs. its 2-lift). Run with identity weights (deterministic,
          the large-scale version of Fig. 3 / Appendix B) and with S random weight draws.
   probe  Frozen random encoder + linear (logistic) probe. Nothing in the encoder is trained.
@@ -12,11 +12,10 @@ Parts (choose with --parts, default: sep probe)
          Slower, and can be unstable without a Phi residual; use for the appendix only if stable.
 
 Reference classifiers (no neural net) are printed next to the probe so the result can be read honestly:
-  majority class | 1-WL colour classifier (what ANY message-passing HGNN can reach) | |V_v| classifier.
+  majority class | 1-GWL colour classifier (what ANY message-passing HGNN can reach) | |V_v| classifier.
 
 Notes
-  * Minimal re-implementation of Eqs. (9)-(12); swap HGNN / Encoder / GatedAttention for your repo's
-    modules to test the real model.
+  * Self-contained implementation of Eqs. (9)-(12) and Set-Union Pooling used for Appendix B (Tables 6-8); it does not import models/HSAT.py.
   * With uniform features and mean aggregation, V1 gives the SAME vector for every node of every
     hypergraph, so V1 sits exactly at the majority rate by construction.
   * V2 set-union with mean aggregation reduces to |V_v| * c under uniform features, i.e. it counts

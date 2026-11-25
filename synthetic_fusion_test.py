@@ -13,6 +13,8 @@ Arms (same parameters, same initialisation stream, same training recipe; only th
     v     h0          Phi       V-struct: structure only in the payload
     qkv   Phi         Phi       QKV: HSA-attn 
 
+SAT-style QK-only is Eq. (6); HSA-attn QKV is Eq. (5).
+
     h0 = tanh(W_in x)      h = encoder(.)      Phi = sigmoid(psi1 h0) * h0 + sigmoid(psi2 h) * h   (Eq. 9)
 
 Stripped model: one gated block, single-head exponential-kernel attention, MLP head. No dropout, no
@@ -20,7 +22,7 @@ normalisation, no positional encodings, and by default no skip connection (--ski
 architecture, not optimisation, so it is a switch: --skips none raw phi  (raw adds h0, phi adds Phi).
 
 Parts (--parts)
-    exp1  UNTRAINED, uniform features. Share of 1-WL-equivalent node pairs whose block outputs differ.
+    exp1  UNTRAINED, uniform features. Share of 1-GWL-equivalent node pairs whose block outputs differ.
           Checks Theorem 1 numerically: (i) exact collapse without structural V, (ii) separation with it.
     exp2  TRAINED, label = structure bit only. Features are x = 1 + spread * noise, for each value in
           --spreads. spread 0 is the uniform-feature regime of Theorem 1; spread > 0 gives features that
@@ -31,7 +33,7 @@ Parts (--parts)
             signal : label = structure bit, and the features carry the label with strength a (--signals)
 
 Structure bit s_v = "K-hop sub-hypergraph of v is Berge-acyclic" (same generator as the V1/V2 script:
-biregular base hypergraph + its 2-lift, all paired nodes 1-WL-equivalent). Feature bit f_v ~ Bernoulli(1/2),
+biregular base hypergraph + its 2-lift, all paired nodes 1-GWL-equivalent). Feature bit f_v ~ Bernoulli(1/2),
 independent of the structure. Features: x_v = 1 + a * (2 bit_v - 1) * u + sigma * eps_v, u = (+1,..,-1,..).
 
 Evaluation nodes: by default each instance contributes equally many s = 1 and s = 0 nodes (the larger
@@ -39,7 +41,7 @@ class is subsampled; every node still takes part in attention). Chance is then 5
 arm can profit from the base rate of an instance. --no-balance evaluates on all nodes instead.
 
 Reference classifiers (no neural net) are printed with every trained part so the numbers can be read honestly:
-    majority | logistic probe on raw x | 1-WL colour + feature bit (ceiling for any message-passing encoder)
+    majority | logistic probe on raw x | 1-GWL colour + feature bit (ceiling for any message-passing encoder)
     | |V_v| + feature bit (ceiling for THIS encoder) | per-instance oracle given the feature bit
     | frozen random encoder + logistic probe -> s (does h carry the structure bit at all?)
 
@@ -410,7 +412,7 @@ def logistic_probe(Xtr, ytr, Xte, yte, l2=1e-4):
 
 
 def node_table(insts, cols):
-    """One row per evaluation node: (instance id, label, feature bit, ball size, 1-WL colour)."""
+    """One row per evaluation node: (instance id, label, feature bit, ball size, 1-GWL colour)."""
     rows = []
     for gi, (I, col) in enumerate(zip(insts, cols)):
         lab, fb, ball = I.lab.numpy(), I.fb.numpy(), I.ball.numpy()

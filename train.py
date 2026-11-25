@@ -1,11 +1,7 @@
 import gc
 import os
-from multiprocessing import dummy
 import random
 import time
-import warnings
-
-from sympy import deg
 
 import configargparse
 import numpy as np
@@ -14,8 +10,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch_geometric
 
+import matplotlib as mpl
 import matplotlib.pyplot as plt
-import seaborn as sns
 import pandas as pd
 
 from models import SetGNN, HCHA, HNHN, HyperGCN, HyperSAGE, \
@@ -214,12 +210,6 @@ def main(args):
         raise ValueError(f'Undefined model name: {args.method}')
 
 
-    viz_degrees = []
-    viz_g_proc = []
-    viz_g_se = []
-
-   
-   
     model = model.to(device)
     
     # model = torch.compile(model, mode="max-autotune")
@@ -321,7 +311,7 @@ def main(args):
                 _ = model(data) 
                 
                 run_degrees = model.saved_node_degree
-                run_g_proc = model.saved_g_proc
+                run_g_fe = model.saved_g_fe
                 run_g_se = model.saved_g_se
                 
             
@@ -350,65 +340,14 @@ def main(args):
     if args.extract_subgraph == False and args.mp_steps > 1 and hasattr(model, 'saved_node_degree'):
         print("Generating gate visualization...")
        
-        print(f"Average g_proc across nodes: {np.mean(run_g_proc):.4f}")
+        print(f"Average g_fe across nodes: {np.mean(run_g_fe):.4f}")
         print(f"Average g_se across nodes: {np.mean(run_g_se):.4f}")
         
         
-        plot_gates_by_split(run_degrees, run_g_proc, run_g_se, split_idx, data.num_nodes, data=args.dname)
+        plot_gates_by_split(run_degrees, run_g_fe, run_g_se, split_idx, data.num_nodes, data=args.dname)
 
 
 
-
-# def plot_gates_by_split(degrees, g_proc, g_se, split_idx, num_nodes, data= None):
-#     # 1. Create a label array for all nodes
-#     node_splits = np.array(['Unassigned'] * num_nodes, dtype=object)
-    
-#     # Map indices to their respective splits
-#     # Note: Ensure split_idx tensors are moved to CPU for numpy indexing
-#     node_splits[split_idx['train'].cpu().numpy()] = 'Train'
-#     node_splits[split_idx['valid'].cpu().numpy()] = 'Validation'
-#     node_splits[split_idx['test'].cpu().numpy()] = 'Test'
-
-#     # 2. Build a DataFrame
-#     df = pd.DataFrame({
-#         'Node Degree': degrees,
-#         'g_proc': g_proc,
-#         'g_se': g_se,
-#         'Split': node_splits
-#     })
-
-#     # Remove unassigned nodes (if your dataset doesn't use all nodes)
-#     df = df[df['Split'] != 'Unassigned']
-
-#     # 3. Plotting
-#     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-
-#     # Plot g_proc
-#     sns.scatterplot(data=df, x='Node Degree', y='g_proc', hue='Split', 
-#                     alpha=0.6, ax=axes[0], palette='Set1')
-#     axes[0].set_title('g_proc (Process Gate) vs Node Degree')
-#     axes[0].set_xscale('log') # Use log scale if degrees vary wildly
-
-#     # Plot g_se
-#     sns.scatterplot(data=df, x='Node Degree', y='g_se', hue='Split', 
-#                     alpha=0.6, ax=axes[1], palette='Set1')
-#     axes[1].set_title('g_se (Structure Gate) vs Node Degree')
-#     axes[1].set_xscale('log')
-
-#     plt.tight_layout()
-#     if data is None:
-#         filename = "img.png"
-#         plt.savefig(filename, dpi=300, bbox_inches='tight')
-#         print(f"Successfully saved plot to {filename}")
-#     else:
-#         filename = f"img_{data}.png"
-#         plt.savefig(filename, dpi=300, bbox_inches='tight')
-#         print(f"Successfully saved plot to {filename}")    
-
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib as mpl
 
 def plot_gates_by_split(degrees, g_fe, g_se, split_idx, num_nodes, data=None):
     # ── 0. Global style (NeurIPS Caption Matching) ───────────────────────────
@@ -628,6 +567,8 @@ if __name__ == '__main__':
     parser.add_argument('--use_rwpe', action='store_true')
     parser.add_argument('--use_lappe', action='store_true')
     parser.add_argument('--mixer', default='attn', choices=['attn', 'mlp'], help='attn = HSA-attn; mlp = parameter-matched node-wise MLP')
+    parser.add_argument('--kernel', default='relu', choices=['relu', 'exp'],
+                        help='attention kernel: relu = linear attention (default); exp = scaled dot-product softmax')
     parser.add_argument('--results_tag', default='', help='optional suffix for results/<dname>_<tag>.json, e.g. qk_leak or avg_gate')
     parser.add_argument('--save_ckpt', action='store_true', help="save each run's early-stopping checkpoint and split to checkpoints/")
     parser.add_argument('--feat_source', default='benchmark', choices=['benchmark', 'structural', 'random', 'label_trick'],

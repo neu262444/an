@@ -5,8 +5,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch_scatter
 from mlp import MLP
-from torch_scatter import scatter
-from torch.nn.attention import sdpa_kernel
 import hypergraph
 
 
@@ -20,7 +18,7 @@ def init_params(module, n_layers):
         module.weight.data.normal_(mean=0.0, std=0.02)
 
 class BasicTransformer(nn.Module):
-    def __init__(self, hidden_channels, n_layers=1, heads=8, dropout_rate=0.1, mixer="attn"):
+    def __init__(self, hidden_channels, n_layers=1, heads=8, dropout_rate=0.1, mixer="attn", kernel="relu"):
         super().__init__()
        
         self.layers = nn.ModuleList([
@@ -30,7 +28,8 @@ class BasicTransformer(nn.Module):
                 dropout_rate=dropout_rate,
                 attention_dropout_rate=dropout_rate,
                 num_heads=heads,
-                mixer=mixer
+                mixer=mixer,
+                kernel=kernel
             )
             for _ in range(n_layers)
 
@@ -177,7 +176,8 @@ class GlobalHyperNodeTransformer(nn.Module):
             n_layers=n_layers,
             heads=heads,
             dropout_rate=dropout_rate,
-            mixer=getattr(args, "mixer", "attn")
+            mixer=getattr(args, "mixer", "attn"),
+            kernel=getattr(args, "kernel", "relu")
         )
         
         if self.subhg:  
@@ -341,20 +341,20 @@ class GlobalHyperNodeTransformer(nn.Module):
                 x_, Xv = self._apply_perturb(x_, Xv)   # gates are recomputed from the swapped inputs
        
        
-        g_proc = torch.sigmoid(self.gate_node_emb(x_))
+        g_fe = torch.sigmoid(self.gate_node_emb(x_))
         if self.k > 1:
             g_se   = torch.sigmoid(self.gate_se(Xv))
         if self.perturb is not None and self.perturb.get("fixed_gate", False) and (self.subhg or self.k > 1):
             x_, Xv = self._apply_perturb(x_, Xv)       # original gates kept (secondary test)
         if self.k ==1:
-            x=g_proc*x_
+            x=g_fe*x_
         else:
-            x = g_proc*x_ + g_se*Xv
+            x = g_fe*x_ + g_se*Xv
         
 
         if not self.subhg and self.k > 1:
             self.saved_node_degree = node_degree.squeeze(-1).detach().cpu().numpy()
-            self.saved_g_proc = g_proc.mean(dim=-1).detach().cpu().numpy()
+            self.saved_g_fe = g_fe.mean(dim=-1).detach().cpu().numpy()
             self.saved_g_se = g_se.mean(dim=-1).detach().cpu().numpy()
 
       
@@ -392,7 +392,7 @@ class GlobalHyperNodeTransformer(nn.Module):
     
 
 class EncoderLayer(nn.Module):
-    def __init__(self, hidden_size, ffn_size, dropout_rate, attention_dropout_rate, num_heads, mixer="attn"):
+    def __init__(self, hidden_size, ffn_size, dropout_rate, attention_dropout_rate, num_heads, mixer="attn", kernel="relu"):
         super(EncoderLayer, self).__init__()
 
         self.self_attention_norm = nn.LayerNorm(hidden_size)
@@ -402,8 +402,14 @@ class EncoderLayer(nn.Module):
             # node-wise MLP, no cross-node mixing: 4d^2+3d params vs 4d^2+4d for attention
             self.self_attention = FeedForwardNetwork(hidden_size, 2 * hidden_size, dropout_rate)
         else:
-            self.self_attention = MultiHeadAttention(
-                hidden_size, attention_dropout_rate, num_heads)
+            if kernel == "relu":
+                self.self_attention = MultiHeadAttention(
+                    hidden_size, attention_dropout_rate, num_heads)
+            elif kernel == "exp":
+                self.self_attention = SoftmaxMultiHeadAttention(
+                    hidden_size, attention_dropout_rate, num_heads)
+            else:
+                raise ValueError(f"unknown attention kernel: {kernel}")
         self.self_attention_dropout = nn.Dropout(dropout_rate)
 
         self.ffn_norm = nn.LayerNorm(hidden_size)
@@ -431,50 +437,6 @@ class EncoderLayer(nn.Module):
 
 
     
-
-
-# class MultiHeadAttention(nn.Module):
-#     def __init__(self, hidden_size, attention_dropout_rate, num_heads):
-#         super().__init__()
-#         self.num_heads = num_heads
-#         self.att_size = hidden_size // num_heads
-
-#         self.linear_q = nn.Linear(hidden_size, hidden_size)
-#         self.linear_k = nn.Linear(hidden_size, hidden_size)
-#         self.linear_v = nn.Linear(hidden_size, hidden_size)
-#         self.output_layer = nn.Linear(hidden_size, hidden_size)
-
-#         self.dropout = attention_dropout_rate
-
-#     def reset_parameters(self):
-#         self.linear_q.reset_parameters()
-#         self.linear_k.reset_parameters()
-#         self.linear_v.reset_parameters()
-#         self.output_layer.reset_parameters()
-
-#     def forward(self, q, k, v, attn_bias=None):
-#         B, L, _ = q.shape
-#         H = self.num_heads
-#         d = self.att_size
-
-#         q = self.linear_q(q).view(B, L, H, d).transpose(1, 2)
-#         k = self.linear_k(k).view(B, L, H, d).transpose(1, 2)
-#         v = self.linear_v(v).view(B, L, H, d).transpose(1, 2)
-#         # q= q /temp
-       
-
-#         # attn_mask=attn_bias.unsqueeze(0).unsqueeze(0) if attn_bias is not None else None
-#         # THIS LINE ENABLES FLASH ATTENTION
-#         out = F.scaled_dot_product_attention(
-#             q, k, v,
-#             attn_mask=attn_bias.unsqueeze(0).unsqueeze(0) if attn_bias is not None else None,
-#             dropout_p=self.dropout if self.training else 0.0,
-#             is_causal=False
-#         )
-
-#         out = out.transpose(1, 2).contiguous().view(B, L, -1)
-#         return self.output_layer(out)
-
 class MultiHeadAttention(nn.Module):
     def __init__(self, hidden_size, attention_dropout_rate, num_heads):
         super().__init__()
@@ -525,6 +487,45 @@ class MultiHeadAttention(nn.Module):
         return self.out_proj(out)
 
 
+class SoftmaxMultiHeadAttention(nn.Module):
+    def __init__(self, hidden_size, attention_dropout_rate, num_heads):
+        super().__init__()
+        self.num_heads = num_heads
+        self.head_dim = hidden_size // num_heads
+
+        self.q_proj = nn.Linear(hidden_size, hidden_size)
+        self.k_proj = nn.Linear(hidden_size, hidden_size)
+        self.v_proj = nn.Linear(hidden_size, hidden_size)
+        self.out_proj = nn.Linear(hidden_size, hidden_size)
+
+        self.dropout_p = attention_dropout_rate
+
+    def reset_parameters(self):
+        self.q_proj.reset_parameters()
+        self.k_proj.reset_parameters()
+        self.v_proj.reset_parameters()
+        self.out_proj.reset_parameters()
+
+    def forward(self, q, k, v, attn_bias=None):
+        B, L, D = q.shape
+        H = self.num_heads
+        d = self.head_dim
+
+        q = self.q_proj(q).view(B, L, H, d).transpose(1, 2)
+        k = self.k_proj(k).view(B, L, H, d).transpose(1, 2)
+        v = self.v_proj(v).view(B, L, H, d).transpose(1, 2)
+
+        out = F.scaled_dot_product_attention(
+            q, k, v,
+            attn_mask=attn_bias.unsqueeze(0).unsqueeze(0) if attn_bias is not None else None,
+            dropout_p=self.dropout_p if self.training else 0.0,
+            is_causal=False,
+        )
+
+        out = out.transpose(1, 2).contiguous().view(B, L, D)
+        return self.out_proj(out)
+
+
 class FeedForwardNetwork(nn.Module):
     def __init__(self, hidden_size, ffn_size, dropout_rate):
         super(FeedForwardNetwork, self).__init__()
@@ -544,90 +545,7 @@ class FeedForwardNetwork(nn.Module):
         return x
     
 
-# class SubHypergraphStructureExtractor(nn.Module):
-#     def __init__(self, embed_dim, num_layers=1, dropout=0.0):
-#         super().__init__()
-#         self.num_layers = 2
-#         self.embed_dim = embed_dim
-
-#         mlp1_layers = 0
-#         mlp2_layers = 0
-    
-#         if mlp1_layers > 0:
-#             self.W1 = MLP(in_channels=embed_dim, out_channels=embed_dim, hidden_channels=embed_dim, num_layers=mlp1_layers,
-#                 dropout=dropout, Normalization='ln', InputNorm=True)
-#         else:
-#             self.W1 = nn.Identity()
-
-#         if mlp2_layers > 0:
-#             self.W2 = MLP(in_channels=embed_dim, out_channels=embed_dim, hidden_channels=embed_dim, num_layers=mlp2_layers,
-#                 dropout=dropout, Normalization='ln', InputNorm=True)
-#         else:
-#             self.W2 = nn.Identity()
-#         self.out_proj = nn.Linear(embed_dim * 2, embed_dim)
-
-#     def reset_parameters(self):
-#         if isinstance(self.W1, MLP):
-#             self.W1.reset_parameters()
-#         if isinstance(self.W2, MLP):
-#             self.W2.reset_parameters()
-
-
-#     def forward(self, x, sub_E, sub_root, sub_node_index):
-#         N = x.shape[0]
-
-#         # --- Precompute all indices once ---
-#         max_local_E = sub_E.max().item() + 1
-#         global_E = sub_root * max_local_E + sub_E          # [nnz]
-#         global_V = sub_root * N + sub_node_index           # [nnz]
-
-#         # Unique (root, node) pairs — computed once, reused every layer
-#         unique_global_V, inverse_indices = torch.unique(
-#             global_V, return_inverse=True
-#         )                                                  # [M], [nnz]
-#         unique_roots = unique_global_V // N                # [M]
-
-#         # --- Initial node features ---
-#         h = x[sub_node_index]                              # [nnz, C]
-#         h_unique_hops = []
-#         for layer_idx in range(self.num_layers):
-            
-#             # --- Node -> Hyperedge ---
-#             Xve = self.W1(h)                                    # [nnz, C]
-#             Xe = torch_scatter.scatter(
-#                 Xve, global_E, dim=0, reduce="mean"
-#             )                                              # [num_global_E, C]
-
-#             # --- Hyperedge -> Node ---
-           
-#             Xev = self.W2(Xe[global_E]) # [nnz, C]
-           
-
-#             # --- Aggregate to unique (root, node) pairs ---
-#             # This is the standard HGNN hyperedge->node aggregation step:
-#             # h_v = mean over all hyperedges e containing v of W2([h_v, h_e])
-#             # inverse_indices maps each incidence pair to its unique (root,node) slot
-#             h_unique = torch_scatter.scatter(
-#                 Xev, inverse_indices,
-#                 dim=0, reduce="mean",
-#                 dim_size=unique_global_V.shape[0]
-#             )                                              # [M, C]
-#             h_unique_hops.append(h_unique)
-#             # Broadcast back to incidence pairs for next layer
-#             h = h_unique[inverse_indices]                  # [nnz, C]
-#         h_unique_accumulated = torch.mean(torch.stack(h_unique_hops, dim=0), dim=0)
-#         # --- Pool unique nodes -> root (sum preserves topological volume) ---
-#         x_sub = torch_scatter.scatter(
-#             h_unique_accumulated, unique_roots,
-#             dim=0, reduce="mean",
-#             dim_size=N
-#         )                                                  # [N, C]
-
-#         # --- Fuse with original features ---
-#         x_struct = self.out_proj(torch.cat([x, x_sub], dim=-1))  # [N, C]
-#         return x_struct
-
-class SubHypergraphRootExtractor(nn.Module):  # root readout
+class SubHypergraphRootExtractor(nn.Module):  # root readout from the earlier released version; not used for any reported result
     def __init__(self, embed_dim, num_layers=1, dropout=0.0):
         super().__init__()
         self.num_layers = 3

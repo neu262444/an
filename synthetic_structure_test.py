@@ -2,7 +2,7 @@
 """
 Structure-only synthetic test for HSGF-T
 =========================================
-Uniform node features + node pairs that (a) are 1-WL-equivalent (so no message-passing HGNN
+Uniform node features + node pairs that (a) are 1-GWL-equivalent (so no message-passing HGNN
 can separate them) but (b) have different K-hop sub-hypergraphs.
 
 What it measures
@@ -56,7 +56,7 @@ def biregular(n, d, r, rng):
 def two_lift(n, edges, rng):
     """Random 2-lift: node (i,s) -> i + n*s. Each hyperedge e becomes two edges that use
     opposite 'sheets' for each member. This is a covering map, so every lifted node has the
-    same unrolled computation tree as its base node (=> 1-WL cannot tell them apart), but
+    same unrolled computation tree as its base node (=> 1-GWL cannot tell them apart), but
     short cycles in the base get unwrapped, so K-hop sub-hypergraphs differ."""
     out = []
     for e in edges:
