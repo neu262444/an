@@ -181,7 +181,7 @@ class GlobalHyperNodeTransformer(nn.Module):
         )
         
         if self.subhg:  
-            if getattr(args, "subhg_encoder", "concat_proj") == "v1_sum":
+            if getattr(args, "subhg_encoder", "v1_sum") == "v1_sum":
                 # paper numbering W1..W4 = self.W1, self.W_tr1, self.W2, self.W_tr2 (same mapping as the V1 loop)
                 self.se_extractor = SubHypergraphV1Extractor(self.W1, self.W_tr1, self.W2, self.W_tr2,
                                                              num_layers=args.mp_steps_subhg)
@@ -627,7 +627,7 @@ class FeedForwardNetwork(nn.Module):
 #         x_struct = self.out_proj(torch.cat([x, x_sub], dim=-1))  # [N, C]
 #         return x_struct
 
-class SubHypergraphRootExtractor(nn.Module):  # root readout, not used in the paper
+class SubHypergraphRootExtractor(nn.Module):  # root readout
     def __init__(self, embed_dim, num_layers=1, dropout=0.0):
         super().__init__()
         self.num_layers = 3

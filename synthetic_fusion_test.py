@@ -9,9 +9,9 @@ Arms (same parameters, same initialisation stream, same training recipe; only th
 
     id    Q, K from   V from    meaning
     x     h0          h0        X-only: plain Transformer, no structure
-    qk    Phi         h0        QK-struct: structure only in the attention weights (SAT-style, Eq. 5)
+    qk    Phi         h0        QK-struct: structure only in the attention weights
     v     h0          Phi       V-struct: structure only in the payload
-    qkv   Phi         Phi       QKV: HSA-attn (Eq. 6)
+    qkv   Phi         Phi       QKV: HSA-attn 
 
     h0 = tanh(W_in x)      h = encoder(.)      Phi = sigmoid(psi1 h0) * h0 + sigmoid(psi2 h) * h   (Eq. 9)
 

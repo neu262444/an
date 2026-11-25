@@ -99,7 +99,15 @@ python train.py \
 
 - `--subhg_hop` defines the hop distance used for constructing local sub-hypergraphs around each node.
 
-- `--subhg_encoder` selects the sub-hypergraph extractor used with `--extract_subgraph`: `concat_proj` (default; the version used for the reported results) or `v1_sum` (Variant-1 layers inside each sub-hypergraph followed by Set-Union Pooling, as in Section 4.1). `--mp_steps_subhg` sets the number of internal layers L and `--subhg_hop` the extraction depth K. Keep `--mp_steps` at 2 or more when using `--extract_subgraph`.
+- `--subhg_encoder` selects the sub-hypergraph extractor used with `--extract_subgraph`: `v1_sum` (default) matches Section 4.1 by applying the V1 scatter-gather updates inside each sub-hypergraph and Set-Union (sum) pooling; `concat_proj` reproduces Table 4 of the submitted version (the earlier concatenation-update variant with sum pooling and output projection). `--mp_steps_subhg` sets the number of internal layers L and `--subhg_hop` the extraction depth K.
+
+### Sub-hypergraph variant (V2)
+
+```bash
+python train.py --dname cora --data_dir ./data/cora/ --runs 10 --n_layers 1 --hidden_dim 256 --dropout 0.7 --lr 0.0008 --wd 0 --method HSAT --mp_steps 2 --w1 0 --w2 0 --w3 0 --w4 0 --w5 0 --clf_layer 1 --extract_subgraph --subhg_hop 4 --mp_steps_subhg 3
+```
+
+Keep `--mp_steps` at 2 or more with `--extract_subgraph`.
 
 - `--feat_source` replaces the node features after loading: `benchmark` (default, the released features), `structural` (degree statistics plus a spectral embedding of the hypergraph), `random` (fixed Gaussian features) or `label_trick` (fixed Gaussian noise plus, for training nodes only, their one-hot label: each epoch a random `--label_trick_rate` share of training nodes shows its label and the loss uses the rest; at evaluation all training labels are shown, and validation and test labels never are). `structural` and `random` never use labels; they are cached in the dataset's `processed/` folder and shared by all methods.
 

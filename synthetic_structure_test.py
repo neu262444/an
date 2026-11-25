@@ -17,9 +17,6 @@ What it measures
   [Part 2] Node classification where the label depends only on structure
            (label = "is the K-hop sub-hypergraph Berge-acyclic?"), features uniform.
 
-NOTE: this is a minimal re-implementation of Eqs. (9)-(12) with Table-5 style settings
-(mean aggregation, no W2/W4). Swap `HGNN`, `Encoder`, `GatedAttention` for the modules in your
-repo to test the real model.
 
 Usage
   python synthetic_structure_test.py --mode dist                 # fast, no training

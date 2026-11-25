@@ -640,8 +640,8 @@ if __name__ == '__main__':
     parser.add_argument('--skip_src', default='phi', choices=['phi', 'raw'])
     parser.add_argument('--mp_steps_subhg', default=3, type=int, help='number of message passing steps in the sub-hypergraph extractor')
     parser.add_argument('--subhg_hop', default=4, type=int, help='number of hops for sub-hypergraph extraction')
-    parser.add_argument('--subhg_encoder', default='concat_proj', choices=['concat_proj', 'v1_sum'],
-                        help='V2 encoder: concat_proj = version used for Table 4 (concat+ReLU layers, sum pooling, out_proj with x); v1_sum = paper Sec. 4.1 (V1 layers, sum pooling)')
+    parser.add_argument('--subhg_encoder', default='v1_sum', choices=['concat_proj', 'v1_sum'],
+                        help='V2 encoder used with --extract_subgraph: v1_sum (default) = Sec. 4.1 of the paper: L layers of the V1 scatter-gather update (Eqs. 10-11) inside each K-hop sub-hypergraph, degrees counted within the sub-hypergraph, then Set-Union (sum) pooling; concat_proj = the earlier variant used for Table 4 (concatenation updates, sum pooling, output projection with x).')
     parser.add_argument('--subhg_max_edges', default=0, type=int,
                         help='V2 only: follow at most this many new hyperedges per frontier node and hop (0 = exact, no cap)')
     parser.add_argument('--profile_steps', default=0, type=int,
